@@ -14,7 +14,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -71,18 +71,22 @@ jobs:
       - name: Installer test (silent install, IPC, uninstall)
         shell: pwsh
         run: |
-          $p = Start-Process dist/DrzReplayWIN-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          # WaitForExit, not -Wait: -Wait also waits for the app the installer starts
+          $p = Start-Process dist/DrzReplayWIN-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -PassThru
+          if (-not $p.WaitForExit(180000)) { throw 'setup hung' }
           if ($p.ExitCode -ne 0) { throw "setup failed ($($p.ExitCode))" }
           $exe = "$env:LOCALAPPDATA\Programs\DrzReplayWIN\DrzReplayWIN.exe"
           if (-not (Test-Path $exe)) { throw 'not installed' }
           Start-Sleep 8
           Get-Process DrzReplayWIN -ErrorAction SilentlyContinue | Format-Table Id, ProcessName
-          $q = Start-Process $exe -ArgumentList 'quit' -Wait -PassThru
+          $q = Start-Process $exe -ArgumentList 'quit' -PassThru
+          $q.WaitForExit(30000) | Out-Null
           Write-Host "quit -> $($q.ExitCode)"
           Start-Sleep 3
           if (Get-Process DrzReplayWIN -ErrorAction SilentlyContinue) { throw 'still running after quit' }
-          $u = Start-Process "$env:LOCALAPPDATA\Programs\DrzReplayWIN\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES' -Wait -PassThru
-          Start-Sleep 2
+          $u = Start-Process "$env:LOCALAPPDATA\Programs\DrzReplayWIN\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES' -PassThru
+          $u.WaitForExit(120000) | Out-Null
+          Start-Sleep 5
           if (Test-Path $exe) { throw 'uninstall left the exe' }
           Write-Host 'install / quit / uninstall OK'
 
