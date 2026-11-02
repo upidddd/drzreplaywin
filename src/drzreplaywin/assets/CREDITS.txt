@@ -1,0 +1,10 @@
+DrzReplayWIN — third-party parts
+================================
+
+click.wav — "lightclunk1.wav" from "Mechanical Sounds" by Brian MacIntosh (BMacZero), CC0
+  https://opengameart.org/content/mechanical-sounds
+
+Interface icons are drawn after Lucide (https://lucide.dev), ISC License.
+
+FFmpeg (https://ffmpeg.org) is shipped as a separate program, ffmpeg.exe, built by
+BtbN/FFmpeg-Builds under the GPL v3. Its source code: https://github.com/FFmpeg/FFmpeg

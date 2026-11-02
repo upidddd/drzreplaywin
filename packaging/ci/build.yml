@@ -1,0 +1,109 @@
+name: Build
+
+# every push: build, self-test on Windows, keep the files as an artifact
+# a v* tag: the same, then publish a GitHub release
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python packages
+        run: pip install -r requirements.txt "pyinstaller>=6.11"
+
+      - name: FFmpeg
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-7.1.zip -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath build/ffmpeg-zip
+          New-Item -ItemType Directory -Force build/ffmpeg | Out-Null
+          Copy-Item (Get-ChildItem build/ffmpeg-zip -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName build/ffmpeg/
+          build/ffmpeg/ffmpeg.exe -hide_banner -version | Select-Object -First 1
+
+      - name: Build the app
+        run: |
+          python packaging/version_info.py
+          pyinstaller --noconfirm --distpath dist --workpath build/pyi packaging/DrzReplayWIN.spec
+
+      - name: Self-test (record, save, hotkey, screenshots)
+        shell: pwsh
+        run: |
+          $p = Start-Process dist/DrzReplayWIN/DrzReplayWIN.exe -ArgumentList '--selftest', "$PWD\selftest" -PassThru
+          if (-not $p.WaitForExit(300000)) { $p.Kill(); throw 'self-test hung' }
+          Get-Content selftest/report.json
+          if ($p.ExitCode -ne 0) { throw "self-test failed ($($p.ExitCode))" }
+
+      - name: Installer
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            $iscc = 'C:\Program Files (x86)\Inno Setup 6'
+            if (-not (Test-Path "$iscc\ISCC.exe")) { choco install innosetup -y --no-progress | Out-Null }
+            $env:PATH += ";$iscc"
+          }
+          iscc /Qp packaging/DrzReplayWIN.iss
+          (Get-Content packaging/install.ps1 -Raw).Replace('@REPO@', '${{ github.repository }}') | Set-Content dist/install.ps1 -NoNewline
+          Compress-Archive dist/DrzReplayWIN/* dist/DrzReplayWIN-portable.zip
+          Get-ChildItem dist -File | Format-Table Name, Length
+
+      - name: Installer test (silent install, IPC, uninstall)
+        shell: pwsh
+        run: |
+          $p = Start-Process dist/DrzReplayWIN-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "setup failed ($($p.ExitCode))" }
+          $exe = "$env:LOCALAPPDATA\Programs\DrzReplayWIN\DrzReplayWIN.exe"
+          if (-not (Test-Path $exe)) { throw 'not installed' }
+          Start-Sleep 8
+          Get-Process DrzReplayWIN -ErrorAction SilentlyContinue | Format-Table Id, ProcessName
+          $q = Start-Process $exe -ArgumentList 'quit' -Wait -PassThru
+          Write-Host "quit -> $($q.ExitCode)"
+          Start-Sleep 3
+          if (Get-Process DrzReplayWIN -ErrorAction SilentlyContinue) { throw 'still running after quit' }
+          $u = Start-Process "$env:LOCALAPPDATA\Programs\DrzReplayWIN\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES' -Wait -PassThru
+          Start-Sleep 2
+          if (Test-Path $exe) { throw 'uninstall left the exe' }
+          Write-Host 'install / quit / uninstall OK'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selftest
+          path: |
+            selftest/*.png
+            selftest/report.json
+            selftest/home/*.log
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DrzReplayWIN-${{ env.APP_VERSION }}
+          path: |
+            dist/DrzReplayWIN-Setup.exe
+            dist/DrzReplayWIN-portable.zip
+            dist/install.ps1
+          retention-days: 14
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ('${{ github.ref_name }}' -ne "v$env:APP_VERSION") { throw "tag ${{ github.ref_name }} != version $env:APP_VERSION" }
+          $notes = "Install or update (PowerShell):`n`n``````powershell`nirm https://github.com/${{ github.repository }}/releases/latest/download/install.ps1 | iex`n```````n`nOr download **DrzReplayWIN-Setup.exe** below."
+          gh release create '${{ github.ref_name }}' dist/DrzReplayWIN-Setup.exe dist/DrzReplayWIN-portable.zip dist/install.ps1 --title "DrzReplayWIN $env:APP_VERSION" --notes $notes
