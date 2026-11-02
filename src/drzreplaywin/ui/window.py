@@ -576,7 +576,7 @@ class Window(QMainWindow):
         g = W.Group("Startup")
         row = W.Row("Start with Windows", "Recording starts in the tray when you log in")
         self.auto_switch = row.add_suffix(W.Switch(autostart.enabled()))
-        self.auto_switch.toggled.connect(autostart.set_enabled)
+        self.auto_switch.toggled.connect(lambda on: autostart.safe(autostart.set_enabled, on))
         self.auto_switch.setEnabled(C.FROZEN)
         g.add(row)
         lay.addWidget(g)

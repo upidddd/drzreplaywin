@@ -54,9 +54,10 @@ class App(QObject):
 
         if self.first_run:
             C.save(self.cfg)
-            autostart.set_enabled(True)
-        else:
-            autostart.refresh()
+            if not selftest:
+                autostart.safe(autostart.set_enabled, True)
+        elif not selftest:
+            autostart.safe(autostart.refresh)
         self.recorder.start()
         threading.Thread(target=lambda: self.event.emit("devices", devices()), daemon=True).start()
 

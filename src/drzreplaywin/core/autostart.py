@@ -26,7 +26,7 @@ def set_enabled(on):
     if not (C.WINDOWS and C.FROZEN):
         return
     import winreg
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
+    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
         if on:
             winreg.SetValueEx(k, C.APP_NAME, 0, winreg.REG_SZ, command())
         else:
@@ -40,3 +40,10 @@ def refresh():
     """After an update or a move of the install folder, point the entry at this exe again."""
     if enabled():
         set_enabled(True)
+
+
+def safe(fn, *args):
+    try:
+        fn(*args)
+    except OSError as e:
+        print(f"autostart: {e}")
