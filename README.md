@@ -7,18 +7,18 @@
 **Instant replay for Windows.** Your screen is always recorded into memory —
 press **Alt+Z** and the last minute becomes a video file.
 
-[![Release](https://img.shields.io/github/v/release/upidddd/DrzReplayWIN?style=flat-square&color=0078d4)](https://github.com/upidddd/DrzReplayWIN/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/upidddd/DrzReplayWIN/total?style=flat-square&color=0078d4)](https://github.com/upidddd/DrzReplayWIN/releases)
+[![Release](https://img.shields.io/github/v/release/upidddd/drzreplaywin?style=flat-square&color=0078d4)](https://github.com/upidddd/drzreplaywin/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/upidddd/drzreplaywin/total?style=flat-square&color=0078d4)](https://github.com/upidddd/drzreplaywin/releases)
 [![Platform](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4?style=flat-square)](#requirements)
-[![License](https://img.shields.io/github/license/upidddd/DrzReplayWIN?style=flat-square&color=0078d4)](LICENSE)
+[![License](https://img.shields.io/github/license/upidddd/drzreplaywin?style=flat-square&color=0078d4)](LICENSE)
 
 Open **PowerShell** and paste:
 
 ```powershell
-irm https://github.com/upidddd/DrzReplayWIN/releases/latest/download/install.ps1 | iex
+irm https://github.com/upidddd/drzreplaywin/releases/latest/download/install.ps1 | iex
 ```
 
-or download [**DrzReplayWIN-Setup.exe**](https://github.com/upidddd/DrzReplayWIN/releases/latest/download/DrzReplayWIN-Setup.exe)
+or download [**DrzReplayWIN-Setup.exe**](https://github.com/upidddd/drzreplaywin/releases/latest/download/DrzReplayWIN-Setup.exe)
 
 <img src="docs/record.png" width="32%" alt="Record tab"> <img src="docs/clips.png" width="32%" alt="Clips tab"> <img src="docs/settings.png" width="32%" alt="Settings tab">
 
@@ -54,7 +54,7 @@ The Windows twin of [DrzReplay for Linux](https://github.com/upidddd/drzreplay).
 ## Install
 
 ```powershell
-irm https://github.com/upidddd/DrzReplayWIN/releases/latest/download/install.ps1 | iex
+irm https://github.com/upidddd/drzreplaywin/releases/latest/download/install.ps1 | iex
 ```
 
 Paste it into PowerShell (Start → type *PowerShell* → Enter). It downloads the latest release
@@ -64,7 +64,7 @@ from then on it starts with Windows and sits in the tray.
 - **Update:** press *Update* in the app (or in the tray menu), or run the same command again.
   Settings and clips are kept.
 - **Setup file:** download `DrzReplayWIN-Setup.exe` from
-  [Releases](https://github.com/upidddd/DrzReplayWIN/releases). If Windows says
+  [Releases](https://github.com/upidddd/drzreplaywin/releases). If Windows says
   *"Windows protected your PC"*, click **More info → Run anyway** (the app isn't code-signed).
 - **Portable:** `DrzReplayWIN-portable.zip` — unpack anywhere and run `DrzReplayWIN.exe`.
 - **Uninstall:** Settings → Apps → Installed apps → DrzReplayWIN → Uninstall.

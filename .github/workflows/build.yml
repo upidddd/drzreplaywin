@@ -29,7 +29,7 @@ jobs:
         shell: pwsh
         run: |
           $ProgressPreference = 'SilentlyContinue'
-          Invoke-WebRequest https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-7.1.zip -OutFile ffmpeg.zip
+          Invoke-WebRequest https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-8.1.zip -OutFile ffmpeg.zip
           Expand-Archive ffmpeg.zip -DestinationPath build/ffmpeg-zip
           New-Item -ItemType Directory -Force build/ffmpeg | Out-Null
           Copy-Item (Get-ChildItem build/ffmpeg-zip -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName build/ffmpeg/
