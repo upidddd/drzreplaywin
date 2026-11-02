@@ -27,9 +27,16 @@ jobs:
 
       - name: FFmpeg
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $ProgressPreference = 'SilentlyContinue'
-          Invoke-WebRequest https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-8.1.zip -OutFile ffmpeg.zip
+          # BtbN re-uploads "latest" every day: retry if we hit the moment it is being replaced
+          foreach ($i in 1..5) {
+            gh release download latest -R BtbN/FFmpeg-Builds -p 'ffmpeg-n8.1-latest-win64-gpl-8.1.zip' -O ffmpeg.zip --clobber
+            if ($LASTEXITCODE -eq 0) { break }
+            Start-Sleep 30
+          }
+          if (-not (Test-Path ffmpeg.zip)) { throw 'ffmpeg download failed' }
           Expand-Archive ffmpeg.zip -DestinationPath build/ffmpeg-zip
           New-Item -ItemType Directory -Force build/ffmpeg | Out-Null
           Copy-Item (Get-ChildItem build/ffmpeg-zip -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName build/ffmpeg/
