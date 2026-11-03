@@ -16,6 +16,7 @@ from ..recorder.audio import devices
 from ..recorder.hotkey import Hotkey
 from ..recorder.recorder import Recorder
 from . import widgets as W
+from .overlay import Overlay
 from .tray import Tray
 
 
@@ -44,6 +45,7 @@ class App(QObject):
         self.recorder = Recorder(self.cfg, self.event.emit)
         self.hotkey = Hotkey(self.cfg["hotkey"], lambda: self.event.emit("hotkey", None))
         self.tray = Tray(self)
+        self.overlay = Overlay()
         self.tray.messageClicked.connect(self.on_message_clicked)
         self.tray.show()
 
@@ -118,7 +120,7 @@ class App(QObject):
         st = self.recorder.state
         msg = "Recording is paused" if st == "paused" else "Nothing recorded yet" if st != "error" else \
             "Not recording: " + (self.recorder.error or "error")
-        self.notify(msg)
+        self.badge(msg, ok=False)
         return False
 
     def open_folder(self):
@@ -164,6 +166,13 @@ class App(QObject):
         elif self.cfg["notifications"]:
             self.tray.showMessage(C.APP_NAME, text, QIcon(C.ICON_PATH), 4000)
 
+    def badge(self, title, detail="", ok=True):
+        """Corner badge over everything, games included (Windows mutes notifications while gaming)."""
+        if self.window and self.window.isVisible() and self.window.isActiveWindow():
+            self.window.toast.show_text(f"{title} · {detail}" if detail else title)
+        elif self.cfg["notifications"]:
+            self.overlay.show_text(title, detail, ok)
+
     def on_message_clicked(self):
         if self.update_ready and self._last_message == "update":
             self.run_update()
@@ -183,11 +192,11 @@ class App(QObject):
             self.last_clip = data["path"]
             self._last_message = "clip"
             from .window import human_size, human_time
-            self.notify(f"Replay saved · {human_time(data['length'])} · {human_size(data['size'])}")
+            self.badge("Replay saved", f"{human_time(data['length'])} · {human_size(data['size'])}")
             if self.window:
                 self.window.load_clips(True)
         elif kind == "save_failed":
-            self.notify(f"Couldn't save: {data}")
+            self.badge("Couldn't save the replay", str(data)[:80], ok=False)
         elif kind == "state":
             self.tray.update()
             if self.window:

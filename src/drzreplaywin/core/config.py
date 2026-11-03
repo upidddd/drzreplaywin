@@ -4,7 +4,7 @@ import os
 import sys
 
 APP_NAME = "DrzReplayWIN"
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 REPO = "upidddd/drzreplaywin"
 INSTALL_CMD = f"irm https://github.com/{REPO}/releases/latest/download/install.ps1 | iex"
 SETUP_URL = f"https://github.com/{REPO}/releases/latest/download/DrzReplayWIN-Setup.exe"

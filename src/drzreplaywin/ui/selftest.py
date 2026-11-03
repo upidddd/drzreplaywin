@@ -121,6 +121,12 @@ class SelfTest:
                     app.qapp.processEvents()
                     time.sleep(0.05)
                 win.grab().save(os.path.join(self.out, f"{name}-{theme}.png"))
+        self.force_theme("light")
+        app.overlay.show_text("Replay saved", "0:20 · 31.4 MB")
+        for _ in range(5):
+            app.qapp.processEvents()
+            time.sleep(0.05)
+        app.overlay.grab().save(os.path.join(self.out, "overlay.png"))
         self.log("screenshots taken")
         return True
 

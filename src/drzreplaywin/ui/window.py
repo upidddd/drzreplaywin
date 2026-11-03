@@ -570,7 +570,7 @@ class Window(QMainWindow):
         self.hk_row.add_suffix(hk_btn)
         g.add(self.hk_row)
         g.add(self.switch("Click sound", "click_sound", "When a replay is being saved"))
-        g.add(self.switch("Notifications", "notifications"))
+        g.add(self.switch("Notifications", "notifications", "A badge in the corner of the screen, over games too"))
         lay.addWidget(g)
 
         g = W.Group("Startup")
