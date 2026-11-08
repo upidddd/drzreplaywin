@@ -48,6 +48,8 @@ class Ring:
             self.size = 0
             self.pending = b""
             self.pat = self.pmt = b""
+            self.tap = None             # a file the stream is also written to (full recording)
+            self.tap_header = False
 
     # ------------------------------------------------------------------ writing
     def feed(self, data):
@@ -77,6 +79,7 @@ class Ring:
                 setattr(self, attr, bytes(buf[i:i + TS]))
         now = time.monotonic()
         with self.lock:
+            had_chunk = self.cur is not None
             pos = start
             for k in keys:
                 i = start + int(k) * TS
@@ -90,6 +93,12 @@ class Ring:
                 pos = i
             if self.cur is not None:
                 self.cur.data += buf[pos:n]
+            if self.tap is not None and (had_chunk or keys.size):
+                first = start if had_chunk else start + int(keys[0]) * TS
+                if not self.tap_header:
+                    self.tap.write(self.pat + self.pmt)
+                    self.tap_header = True
+                self.tap.write(buf[first:n])
             self.size = sum(len(c.data) for c in self.chunks)
             self._trim(now)
 
@@ -105,6 +114,19 @@ class Ring:
         keep = self.seconds
         while len(self.chunks) > 1 and (self._age(self.chunks[1], now) >= keep or self.size > self.max_bytes):
             self.size -= len(self.chunks.popleft().data)
+
+    def start_tap(self, f):
+        """Also write the stream to f from the current keyframe on (at most a second before now)."""
+        with self.lock:
+            self.tap, self.tap_header = f, False
+            if self.cur is not None and self.pat and self.pmt:
+                f.write(self.pat + self.pmt + bytes(self.cur.data))
+                self.tap_header = True
+
+    def stop_tap(self):
+        with self.lock:
+            f, self.tap = self.tap, None
+            return f
 
     # ------------------------------------------------------------------ reading
     def _now_pts(self, now):

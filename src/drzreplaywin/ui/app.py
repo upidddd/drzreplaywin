@@ -44,6 +44,7 @@ class App(QObject):
 
         self.recorder = Recorder(self.cfg, self.event.emit)
         self.hotkey = Hotkey(self.cfg["hotkey"], lambda: self.event.emit("hotkey", None))
+        self.rec_hotkey = Hotkey(self.cfg["record_hotkey"], lambda: self.event.emit("rec_hotkey", None))
         self.tray = Tray(self)
         self.overlay = Overlay()
         self.tray.messageClicked.connect(self.on_message_clicked)
@@ -90,6 +91,8 @@ class App(QObject):
             self.recorder.ring.seconds = value
         if key == "hotkey":
             self.hotkey.set(value)
+        if key == "record_hotkey":
+            self.rec_hotkey.set(value)
         self.tray.update()
 
     def restart_recorder(self):
@@ -114,8 +117,17 @@ class App(QObject):
         if self.window:
             self.window.toast.show_text("Checking the graphics card…")
 
-    def save_replay(self, seconds=None):
-        if self.recorder.save(seconds):
+    def toggle_recording(self):
+        if self.recorder.filerec:
+            self.recorder.stop_file()
+            return True
+        if self.recorder.start_file():
+            return True
+        self.badge("Turn recording on first", ok=False)
+        return False
+
+    def save_replay(self):
+        if self.recorder.save():
             return True
         st = self.recorder.state
         msg = "Recording is paused" if st == "paused" else "Nothing recorded yet" if st != "error" else \
@@ -154,6 +166,8 @@ class App(QObject):
             self.save_timer.stop()
             C.save(self.cfg)
         self.hotkey.stop()
+        self.rec_hotkey.stop()
+        self.recorder.stop_file(wait=True)        # don't lose a running recording
         self.recorder.stop()
         self.recorder.write_log()
         self.tray.hide()
@@ -185,6 +199,25 @@ class App(QObject):
     def on_event(self, kind, data):
         if kind == "hotkey":
             self.save_replay()
+        elif kind == "rec_hotkey":
+            self.toggle_recording()
+        elif kind == "rec_started":
+            if self.cfg["click_sound"]:
+                play_click()
+            key = f"{self.cfg['record_hotkey']} to stop" if self.cfg["record_hotkey"] else ""
+            self.badge("Recording", key)
+            self.tray.update()
+        elif kind == "rec_stopped":
+            if self.cfg["click_sound"]:
+                play_click()
+            self.tray.update()
+        elif kind == "recorded":
+            self.last_clip = data["path"]
+            self._last_message = "clip"
+            from .window import human_size, human_time
+            self.badge("Recording saved", f"{human_time(data['length'])} · {human_size(data['size'])}")
+            if self.window:
+                self.window.load_clips(True)
         elif kind == "saving":
             if self.cfg["click_sound"]:
                 play_click()
@@ -271,7 +304,9 @@ class App(QObject):
         if not cmd or cmd[0] == "show":
             self.show_window()
         elif cmd[0] == "save":
-            ok = self.save_replay(int(cmd[1]) if len(cmd) > 1 and cmd[1].isdigit() else None)
+            ok = self.save_replay()
+        elif cmd[0] == "record":
+            ok = self.toggle_recording()
         elif cmd[0] == "ping":
             pass
         elif cmd[0] == "quit":

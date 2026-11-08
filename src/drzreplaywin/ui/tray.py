@@ -1,4 +1,6 @@
 """Tray icon: left click opens the window, middle click saves, right click shows the menu."""
+import time
+
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QSystemTrayIcon
 
@@ -15,7 +17,7 @@ class Tray(QSystemTrayIcon):
         m = W.menu()
         self.item_update = m.addAction("Update", app.run_update)
         self.item_save = m.addAction("Save replay", lambda: app.save_replay())
-        self.item_custom = m.addAction("Save last", lambda: app.save_replay(int(app.cfg["custom_seconds"])))
+        self.item_record = m.addAction("Start recording", app.toggle_recording)
         m.addSeparator()
         self.item_pause = m.addAction("Pause", lambda: app.resume() if app.paused() else app.pause())
         m.addSeparator()
@@ -43,11 +45,19 @@ class Tray(QSystemTrayIcon):
         if a.update_ready:
             self.item_update.setText(f"Update to {a.update_ready}…")
         self.item_save.setText(f"Save replay ({a.cfg['hotkey']})")
-        self.item_custom.setText(f"Save last {int(a.cfg['custom_seconds'])} s")
         on = a.recorder.state == "recording"
         self.item_save.setEnabled(on)
-        self.item_custom.setEnabled(on)
+        rec = a.recorder.filerec
+        if rec:
+            mins, secs = divmod(int(time.time() - rec["t0"]), 60)
+            self.item_record.setText(f"Stop recording · {mins}:{secs:02d}")
+        else:
+            key = f" ({a.cfg['record_hotkey']})" if a.cfg["record_hotkey"] else ""
+            self.item_record.setText(f"Start recording{key}")
+        self.item_record.setEnabled(on or bool(rec))
         self.setIcon(self.icon_off if paused or a.recorder.state == "error" else self.icon_on)
         state = {"recording": "recording", "paused": "paused", "error": "not recording"}.get(a.recorder.state,
                                                                                             "starting…")
+        if rec:
+            state = "recording a video"
         self.setToolTip(f"{C.APP_NAME}: {state}")

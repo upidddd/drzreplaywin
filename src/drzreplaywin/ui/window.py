@@ -3,6 +3,7 @@ import hashlib
 import os
 import queue
 import threading
+import time
 from datetime import datetime, timedelta
 
 from PySide6.QtCore import QMimeData, QPoint, QSize, Qt, QTimer, QUrl, Signal
@@ -136,37 +137,6 @@ class ClipRow(W.Row):
             return
         self._press = None
         super().mouseReleaseEvent(e)
-
-
-class SecondsDialog(QDialog):
-    def __init__(self, parent, top, value):
-        super().__init__(parent)
-        self.setWindowTitle("Save the last…")
-        self.setModal(True)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(24, 20, 24, 20)
-        lay.setSpacing(16)
-        lay.addWidget(W.label("Save the last…", "big"))
-        g = W.Group()
-        row = W.Row("Seconds", f"Up to {top}")
-        self.spin = QSpinBox(minimum=1, maximum=top, value=min(value, top))
-        row.add_suffix(self.spin)
-        g.add(row)
-        lay.addWidget(g)
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        cancel = QPushButton("Cancel")
-        cancel.clicked.connect(self.reject)
-        ok = QPushButton("Save")
-        ok.setObjectName("accent")
-        ok.setDefault(True)
-        ok.clicked.connect(self.accept)
-        buttons.addWidget(cancel)
-        buttons.addWidget(ok)
-        lay.addLayout(buttons)
-        self.setMinimumWidth(340)
-        self.spin.setFocus()
-        self.spin.selectAll()
 
 
 class HotkeyDialog(QDialog):
@@ -396,13 +366,22 @@ class Window(QMainWindow):
 
         box = QVBoxLayout()
         box.setSpacing(8)
-        m = W.menu(self)
-        m.addAction("Save last…", self.ask_seconds)
-        self.save_btn = W.SplitButton("Save replay", m)
+        self.save_btn = QPushButton("Save replay")
+        self.save_btn.setObjectName("saveBig")
+        self.save_btn.setCursor(Qt.PointingHandCursor)
         self.save_btn.clicked.connect(lambda: self.app.save_replay())
         box.addWidget(self.save_btn, 0, Qt.AlignHCenter)
         self.save_hint = W.label("", "subtitle")
         box.addWidget(self.save_hint, 0, Qt.AlignHCenter)
+        box.addSpacing(14)
+        # a full video from now until stopped (same encoder, no extra load)
+        self.rec_btn = QPushButton("Start recording")
+        self.rec_btn.setObjectName("recBtn")
+        self.rec_btn.setCursor(Qt.PointingHandCursor)
+        self.rec_btn.clicked.connect(self.app.toggle_recording)
+        box.addWidget(self.rec_btn, 0, Qt.AlignHCenter)
+        self.rec_hint = W.label("", "subtitle")
+        box.addWidget(self.rec_hint, 0, Qt.AlignHCenter)
         holder = QWidget()
         holder.setLayout(box)
         lay.addWidget(holder)
@@ -563,13 +542,14 @@ class Window(QMainWindow):
         lay.addWidget(g)
 
         g = W.Group("Controls")
-        self.hk_row = W.Row("Hotkey")
-        self.hk_label = self.hk_row.add_suffix(W.label(self.cfg["hotkey"], "dim"))
-        hk_btn = QPushButton("Change")
-        hk_btn.clicked.connect(self.change_hotkey)
-        self.hk_row.add_suffix(hk_btn)
+        self.hk_row, self.hk_label = self.hotkey_row("Replay hotkey", "hotkey")
         g.add(self.hk_row)
-        g.add(self.switch("Click sound", "click_sound", "When a replay is being saved"))
+        self.rk_row, self.rk_label = self.hotkey_row("Recording hotkey", "record_hotkey",
+                                                     "Starts and stops recording a full video")
+        g.add(self.rk_row)
+        g.add(self.switch("Clear the buffer after a replay", "replay_since_last",
+                          "The next replay only has what happened after the last one"))
+        g.add(self.switch("Click sound", "click_sound", "When a replay is saved or a recording starts and stops"))
         g.add(self.switch("Notifications", "notifications", "A badge in the corner of the screen, over games too"))
         lay.addWidget(g)
 
@@ -597,6 +577,9 @@ class Window(QMainWindow):
         for w in (self.mic_row, self.mic_vol):
             w.setEnabled(bool(self.cfg["mic"]))
         self.save_hint.setText(f"or press {self.cfg['hotkey']}")
+        rk = self.cfg["record_hotkey"]
+        self.rec_hint.setText(f"or press {rk}" if rk else "")
+        self.rec_hint.setVisible(bool(rk))
 
     # ------------------------------------------------------------------ status
     def poll(self):
@@ -627,8 +610,20 @@ class Window(QMainWindow):
                                   if recording else "Empty")
         self.save_btn.setEnabled(recording and buffered >= 1)
         self.show_probe(st)
-        hk = self.app.hotkey
-        self.hk_row.set_subtitle("" if hk.ok or hk.error == "starting" else f"Not working: {hk.error}")
+        for hk, row, sub in ((self.app.hotkey, self.hk_row, ""),
+                             (self.app.rec_hotkey, self.rk_row, "Starts and stops recording a full video")):
+            row.set_subtitle(sub if hk.ok or hk.error == "starting" else f"Not working: {hk.error}")
+        rec = self.app.recorder.filerec
+        if rec:
+            mins, secs = divmod(int(time.time() - rec["t0"]), 60)
+            self.rec_btn.setText(f"■  Stop recording · {mins}:{secs:02d}")
+        else:
+            self.rec_btn.setText("●  Start recording")
+        if self.rec_btn.property("active") != bool(rec):
+            self.rec_btn.setProperty("active", bool(rec))
+            self.rec_btn.style().unpolish(self.rec_btn)
+            self.rec_btn.style().polish(self.rec_btn)
+        self.rec_btn.setEnabled(recording or bool(rec))
         self.load_clips()
 
     def on_rec_switch(self, on):
@@ -636,14 +631,6 @@ class Window(QMainWindow):
             self.app.resume()
         else:
             self.app.pause()
-
-    def ask_seconds(self):
-        top = int(self.cfg["seconds"])
-        dlg = SecondsDialog(self, top, int(self.cfg["custom_seconds"]))
-        if dlg.exec():
-            sec = dlg.spin.value()
-            self.set("custom_seconds", sec)
-            self.app.save_replay(sec)
 
     def pick_folder(self):
         d = QFileDialog.getExistingDirectory(self, "Folder for clips", C.output_dir(self.cfg))
@@ -653,14 +640,27 @@ class Window(QMainWindow):
             self.dir_row.set_subtitle(short_path(d))
             self.load_clips(True)
 
-    def change_hotkey(self):
-        self.app.hotkey.set("")            # free the old key so it can be pressed in the dialog
+    def hotkey_row(self, title, key, subtitle=None):
+        row = W.Row(title, subtitle)
+        label = row.add_suffix(W.label(self.cfg[key] or "None", "dim"))
+        btn = QPushButton("Change")
+        btn.clicked.connect(lambda: self.change_hotkey(key, label))
+        row.add_suffix(btn)
+        return row, label
+
+    def change_hotkey(self, key="hotkey", label=None):
+        hk = self.app.hotkey if key == "hotkey" else self.app.rec_hotkey
+        hk.set("")                         # free the old key so it can be pressed in the dialog
         dlg = HotkeyDialog(self)
         if dlg.exec() and dlg.result_key:
-            self.set("hotkey", dlg.result_key)
-            self.hk_label.setText(dlg.result_key)
-            self.update_sensitivity()
-        self.app.hotkey.set(self.cfg["hotkey"])
+            other = "record_hotkey" if key == "hotkey" else "hotkey"
+            if dlg.result_key == self.cfg[other]:
+                self.toast.show_text("That key is already used for the other action")
+            else:
+                self.set(key, dlg.result_key)
+                (label or self.hk_label).setText(dlg.result_key)
+                self.update_sensitivity()
+        hk.set(self.cfg[key])
 
     # ------------------------------------------------------------------ updates
     def show_update(self, latest, checked=True):

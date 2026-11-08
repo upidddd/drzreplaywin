@@ -3,7 +3,8 @@
     DrzReplayWIN.exe                 open the window (starts recording if it isn't running)
     DrzReplayWIN.exe --background    start in the tray only (used by "Start with Windows")
     DrzReplayWIN.exe --updated       the same, plus an "Updated" notification (run by the installer)
-    DrzReplayWIN.exe save [N]        save a replay now (optionally only the last N seconds)
+    DrzReplayWIN.exe save            save a replay now
+    DrzReplayWIN.exe record          start / stop recording a full video
     DrzReplayWIN.exe quit            stop recording and close
 """
 import os
@@ -52,14 +53,12 @@ def main(argv=None):
 
     setup_logging()
     cmd = argv[0] if argv and not argv[0].startswith("-") else "show"
-    if cmd == "save":
-        cmd = "save " + (argv[1] if len(argv) > 1 else "")
     from PySide6.QtWidgets import QApplication
     qapp = QApplication(sys.argv[:1])
     reply = send("ping" if "--background" in argv or "--updated" in argv else cmd)
     if reply is not None:                   # already running: it did the job
         return 0 if reply == "ok" else 1
-    if cmd.startswith(("save", "quit")):
+    if cmd in ("save", "record", "quit"):
         print(f"{C.APP_NAME} is not running", file=sys.stderr)
         return 1
     from .ui.app import run

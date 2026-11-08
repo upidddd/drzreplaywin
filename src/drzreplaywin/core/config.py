@@ -4,7 +4,7 @@ import os
 import sys
 
 APP_NAME = "DrzReplayWIN"
-VERSION = "1.0.1"
+VERSION = "1.1.0"
 REPO = "upidddd/drzreplaywin"
 INSTALL_CMD = f"irm https://github.com/{REPO}/releases/latest/download/install.ps1 | iex"
 SETUP_URL = f"https://github.com/{REPO}/releases/latest/download/DrzReplayWIN-Setup.exe"
@@ -93,7 +93,8 @@ DEFAULTS = {
     "hotkey": "Alt+Z",
     "click_sound": True,
     "notifications": True,
-    "custom_seconds": 20,         # "Save last N s" in the tray / Save menu
+    "record_hotkey": "Alt+R",     # start / stop recording a full video
+    "replay_since_last": True,    # a replay empties the buffer: the next one has only what came after it
     "tray_hint_shown": False,
 }
 

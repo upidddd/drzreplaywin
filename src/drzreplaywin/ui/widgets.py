@@ -116,6 +116,12 @@ QPushButton#accent:hover, QPushButton#saveMain:hover, QToolButton#accentDrop:hov
 QPushButton#accent:pressed, QPushButton#saveMain:pressed, QToolButton#accentDrop:pressed {{ background: {accent_press}; }}
 QPushButton#accent:disabled, QPushButton#saveMain:disabled, QToolButton#accentDrop:disabled {{ background: {track}; border-color: {track}; color: {card}; }}
 QPushButton#saveMain {{ border-top-right-radius: 0; border-bottom-right-radius: 0; padding: 0 28px; min-height: 38px; font-size: 10.5pt; }}
+QPushButton#saveBig {{ background: {accent}; color: {accent_text}; border: 1px solid {accent}; font-weight: 600; padding: 0 40px; min-height: 38px; font-size: 10.5pt; }}
+QPushButton#saveBig:hover {{ background: {accent_hover}; border-color: {accent_hover}; }}
+QPushButton#saveBig:pressed {{ background: {accent_press}; }}
+QPushButton#saveBig:disabled {{ background: {track}; border-color: {track}; color: {card}; }}
+QPushButton#recBtn {{ padding: 0 22px; min-height: 32px; }}
+QPushButton#recBtn[active="true"] {{ background: {rec}; border-color: {rec}; color: {card}; font-weight: 600; }}
 QToolButton#accentDrop {{ border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 1px solid {accent_press}; min-height: 38px; min-width: 34px; border-radius: 5px; }}
 QToolButton#accentDrop::menu-indicator {{ image: none; width: 0; }}
 QToolButton#flat {{ background: transparent; border: none; border-radius: 5px; padding: 6px; }}

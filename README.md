@@ -40,8 +40,10 @@ The Windows twin of [DrzReplay for Linux](https://github.com/upidddd/drzreplay).
 - **Instant saves.** A clip is cut from memory without re-encoding — it's on disk in a second.
 - **One key.** Alt+Z (or any key you pick) works everywhere, including fullscreen games.
   Press it twice and you get two clips — nothing is lost.
-- **Any length.** Save just the last N seconds — pick N under *Save replay → Save last…*;
-  the tray remembers it as *Save last N s*.
+- **No repeats.** A replay empties the buffer: if 15 seconds passed since the last replay, the next one
+  saves just those 15 s, not the whole minute again (can be turned off in Settings).
+- **Full recordings too.** Alt+R starts recording a whole video, Alt+R again stops it. It uses the same
+  encoder, so it costs nothing extra, and the file is ready a moment after you stop.
 - **Sound.** What you hear (any output device, follows you when you plug in headphones)
   and your microphone, each with its own volume.
 - **Clips tab.** Thumbnails, length and size of every clip. Click to play, **drag a clip
@@ -79,7 +81,8 @@ from then on it starts with Windows and sits in the tray.
 | | |
 |---|---|
 | **Alt+Z** | save the last minute (length is set on the Record tab) |
-| **Tray icon** | click: open the window · right click: save, save last N s, pause, folder, quit · middle click: save |
+| **Alt+R** | start / stop recording a full video |
+| **Tray icon** | click: open the window · right click: save, start / stop recording, pause, folder, quit · middle click: save |
 | **Close button** | hides the window, recording goes on in the tray |
 
 Clips go to `Videos\DrzReplay` as `DrzReplay 2026-11-02 17-20-10.mp4`.
@@ -149,7 +152,8 @@ settings in `%APPDATA%\DrzReplayWIN\config.json`.
 
 ```
 DrzReplayWIN.exe                  open the window
-DrzReplayWIN.exe save [N]         save a replay now (optionally only the last N seconds)
+DrzReplayWIN.exe save             save a replay now
+DrzReplayWIN.exe record           start / stop recording a full video
 DrzReplayWIN.exe --background     start in the tray only
 DrzReplayWIN.exe quit             stop recording and close
 ```

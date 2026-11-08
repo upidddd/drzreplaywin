@@ -36,6 +36,9 @@ class Recorder:
         self.info = {}
         self.started_at = 0.0
         self.log_lines = []
+        self.session = 0.0            # when the current ring started (a restart empties it)
+        self.last_save = None         # (session, press time) of the last replay
+        self.filerec = None           # full recording: {"tmp", "path", "t0", "file"}
         self.saves = queue.Queue()
         threading.Thread(target=self.save_worker, daemon=True, name="saver").start()
 
@@ -51,6 +54,7 @@ class Recorder:
 
     def stop(self, state="off"):
         with self.lock:
+            self.stop_file()
             self.gen += 1
             self._kill()
             self.ring.reset()
@@ -82,7 +86,8 @@ class Recorder:
         p = self.probe or {}
         return {
             "state": self.state, "error": self.error,
-            "buffered": self.ring.buffered() if self.state == "recording" else 0.0,
+            "buffered": self.buffered() if self.state == "recording" else 0.0,
+            "file_recording": self.filerec["t0"] if self.filerec else None,
             "seconds": self.cfg["seconds"], "buffer_mb": self.ring.size / (1 << 20),
             "size": self.info.get("size"), "fps": self.info.get("fps"), "encoder": self.info.get("encoder"),
             "audio_off": self.audio_off or (self.mixer is not None and not self.mixer.working),
@@ -133,7 +138,9 @@ class Recorder:
             cmd = self.build_cmd(enc, with_audio)
             self.log("$ " + " ".join(f'"{a}"' if " " in a else a for a in cmd))
             self.ring.seconds = self.cfg["seconds"]
+            self.stop_file()          # a new ffmpeg means a new stream: finish the running recording
             self.ring.reset()
+            self.session = time.monotonic()
             try:
                 self.proc = proc = system.popen(cmd, priority=system.ABOVE_NORMAL_PRIORITY_CLASS, bufsize=0,
                                                 stdin=subprocess.PIPE if with_audio else subprocess.DEVNULL,
@@ -206,47 +213,57 @@ class Recorder:
         return ""
 
     # ------------------------------------------------------------------ saving
-    def save(self, seconds=None):
+    def buffered(self):
+        """Seconds a replay would save now: a replay empties the buffer."""
+        b = self.ring.buffered()
+        if self.cfg["replay_since_last"] and self.last_save and self.last_save[0] == self.session:
+            b = min(b, max(0.0, time.monotonic() - self.last_save[1]))
+        return b
+
+    def save(self):
         """Queue a save; two presses give two clips."""
         if self.state != "recording" or not self.ring.chunks:
             return False
-        self.saves.put((time.monotonic(), seconds))
+        self.saves.put(("replay", time.monotonic()))
         return True
 
     def save_worker(self):
         while True:
-            t, seconds = self.saves.get()
-            self.emit("saving", seconds)
+            kind, t = self.saves.get()
+            if kind == "recording":
+                self.finish_file(t)
+                continue
+            self.emit("saving", None)
             time.sleep(max(0.0, t + SAVE_DELAY - time.monotonic()))
             try:
-                path, length = self.save_now(seconds)
+                path, length = self.save_now(t)
                 self.emit("saved", {"path": path, "length": length, "size": os.path.getsize(path)})
             except Exception as e:
                 self.log(f"save failed: {e}")
                 self.write_log()
                 self.emit("save_failed", str(e))
 
-    def save_now(self, seconds=None):
-        want = min(float(seconds or self.cfg["seconds"]), float(self.cfg["seconds"]))
-        data, length = self.ring.snapshot(want)
-        if not data:
-            raise RuntimeError("Nothing recorded yet")
+    def new_path(self, ext):
         folder = C.output_dir(self.cfg)
         os.makedirs(folder, exist_ok=True)
-        ext = "mkv" if self.cfg["container"] == "mkv" else "mp4"
         base = f"{self.cfg['file_prefix'] or 'DrzReplay'} {datetime.now():%Y-%m-%d %H-%M-%S}"
         path = os.path.join(folder, f"{base}.{ext}")
         n = 2
         while os.path.exists(path):
             path = os.path.join(folder, f"{base} ({n}).{ext}")
             n += 1
+        return path
+
+    def remux(self, src, path, data=None):
+        """MPEG-TS (a file, or bytes when src is None) → MP4 / MKV, no re-encoding."""
         tmp = path + ".part"
-        cmd = [system.ffmpeg(), "-hide_banner", "-v", "error", "-y", "-f", "mpegts", "-i", "-",
+        cmd = [system.ffmpeg(), "-hide_banner", "-v", "error", "-y", "-f", "mpegts", "-i", src or "-",
                "-map", "0", "-c", "copy", "-dn", "-avoid_negative_ts", "make_zero"]
-        cmd += ["-movflags", "+faststart", "-f", "mp4"] if ext == "mp4" else ["-f", "matroska"]
+        cmd += ["-movflags", "+faststart", "-f", "mp4"] if path.endswith(".mp4") else ["-f", "matroska"]
         proc = system.popen(cmd + [tmp], priority=system.BELOW_NORMAL_PRIORITY_CLASS,
-                            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        _, err = proc.communicate(data, timeout=120)
+                            stdin=subprocess.PIPE if data is not None else subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        _, err = proc.communicate(data, timeout=600 if data is None else 120)
         if proc.returncode != 0 or not os.path.exists(tmp):
             try:
                 os.remove(tmp)
@@ -254,8 +271,72 @@ class Recorder:
                 pass
             raise RuntimeError(err.decode("utf-8", "replace").strip().splitlines()[-1] if err else "ffmpeg failed")
         os.replace(tmp, path)
+
+    def save_now(self, pressed=None):
+        pressed = pressed or time.monotonic()
+        want = float(self.cfg["seconds"])
+        if self.cfg["replay_since_last"] and self.last_save and self.last_save[0] == self.session:
+            want = min(want, max(1.0, pressed - self.last_save[1]))      # only what came after the last one
+        data, length = self.ring.snapshot(want)
+        if not data:
+            raise RuntimeError("Nothing recorded yet")
+        prev, self.last_save = self.last_save, (self.session, pressed)
+        ext = "mkv" if self.cfg["container"] == "mkv" else "mp4"
+        path = self.new_path(ext)
+        try:
+            self.remux(None, path, data)
+        except Exception:
+            self.last_save = prev
+            raise
         self.cleanup(path)
-        return path, length
+        return path, min(length, want + 1.0)
+
+    # ------------------------------------------------------------------ full recordings
+    def toggle_file(self):
+        return self.stop_file() if self.filerec else self.start_file()
+
+    def start_file(self):
+        """Write the stream to disk from now until stopped (same encoder, nothing extra to encode)."""
+        if self.filerec or self.state != "recording" or not self.ring.chunks:
+            return False
+        ext = "mkv" if self.cfg["container"] == "mkv" else "mp4"
+        path = self.new_path(ext)
+        tmp = path[:-len(ext) - 1] + ".recording.ts"
+        try:
+            f = open(tmp, "wb", buffering=1 << 20)
+        except OSError as e:
+            self.emit("save_failed", f"can't record: {e.strerror}")
+            return False
+        self.filerec = {"tmp": tmp, "path": path, "t0": time.time(), "file": f}
+        self.ring.start_tap(f)
+        self.emit("rec_started", None)
+        return True
+
+    def stop_file(self, wait=False):
+        rec = self.filerec
+        if not rec:
+            return False
+        self.filerec = None
+        self.ring.stop_tap()
+        rec["file"].close()
+        rec["length"] = time.time() - rec["t0"]
+        self.emit("rec_stopped", None)
+        if wait:
+            self.finish_file(rec)
+        else:
+            self.saves.put(("recording", rec))
+        return True
+
+    def finish_file(self, rec):
+        try:
+            self.remux(rec["tmp"], rec["path"])
+            os.remove(rec["tmp"])
+            self.emit("recorded", {"path": rec["path"], "length": rec["length"],
+                                   "size": os.path.getsize(rec["path"])})
+        except Exception as e:
+            self.log(f"recording failed: {e}")
+            self.write_log()
+            self.emit("save_failed", f"recording: {e} (the raw file is {rec['tmp']})")
 
     def cleanup(self, keep):
         """Delete the oldest clips past the count / size limits."""
