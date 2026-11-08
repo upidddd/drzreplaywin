@@ -6,10 +6,11 @@ import re
 import subprocess
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from ..core import config as C
 from ..core import system
+from . import intro
 from .audio import RATE, Mixer
 from .ring import Ring
 
@@ -272,6 +273,44 @@ class Recorder:
             raise RuntimeError(err.decode("utf-8", "replace").strip().splitlines()[-1] if err else "ffmpeg failed")
         os.replace(tmp, path)
 
+    def with_intro(self, data, path, number, when):
+        """MPEG-TS bytes → MP4 / MKV with the intro laid over the first seconds. The picture has to be encoded
+        again for that: the encoder the recorder uses, x264 if it can't."""
+        clip = os.path.join(C.DATA_DIR, "intro.mov")
+        os.makedirs(C.DATA_DIR, exist_ok=True)
+        h = (self.info.get("size") or (1920, 1080))[1]
+        intro.render(clip, number, when, h, int(self.cfg["fps"]))
+        x, y = intro.position(h)
+        tmp = path + ".part"
+        enc = self.info.get("encoder") or "x264"
+        err = "ffmpeg failed"
+        try:
+            for e in dict.fromkeys([enc, "x264"]):
+                pix = "nv12" if e in ("qsv", "amf") else "yuv420p"
+                # ffmpeg starts the replay's timestamps at 0, so the intro's START is seconds into the clip
+                fc = (f"[1:v]setpts=PTS-STARTPTS+{intro.START}/TB[ov];"
+                      f"[0:v][ov]overlay={x}:{y}:eof_action=pass,format={pix}[v]")
+                cmd = [system.ffmpeg(), "-hide_banner", "-v", "error", "-y", "-f", "mpegts", "-i", "-", "-i", clip,
+                       "-filter_complex", fc, "-map", "[v]", "-map", "0:a?", "-c:a", "copy", "-dn",
+                       "-fps_mode", "passthrough"]
+                cmd += system.encoder_args(e, self.cfg["rec_quality"], self.cfg["fps"])
+                cmd += ["-movflags", "+faststart", "-f", "mp4"] if path.endswith(".mp4") else ["-f", "matroska"]
+                proc = system.popen(cmd + [tmp], priority=system.BELOW_NORMAL_PRIORITY_CLASS, stdin=subprocess.PIPE,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                _, out = proc.communicate(data, timeout=600)
+                if proc.returncode == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 1000:
+                    os.replace(tmp, path)
+                    return
+                err = out.decode("utf-8", "replace").strip().splitlines()[-1] if out else err
+                self.log(f"intro export with {e} failed: {err}")
+            raise RuntimeError(err)
+        finally:
+            for f in (tmp, clip):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+
     def save_now(self, pressed=None):
         pressed = pressed or time.monotonic()
         want = float(self.cfg["seconds"])
@@ -283,11 +322,21 @@ class Recorder:
         prev, self.last_save = self.last_save, (self.session, pressed)
         ext = "mkv" if self.cfg["container"] == "mkv" else "mp4"
         path = self.new_path(ext)
+        number = intro.next_number(self.cfg)            # every replay counts, intro or not
         try:
-            self.remux(None, path, data)
+            if self.cfg["intro"] and intro.available():
+                when = datetime.now() - timedelta(seconds=max(0.0, time.monotonic() - pressed))
+                try:
+                    self.with_intro(data, path, number, when)
+                except Exception as e:                  # a broken intro must not cost the replay
+                    self.log(f"intro failed, saving without it: {e}")
+                    self.remux(None, path, data)
+            else:
+                self.remux(None, path, data)
         except Exception:
             self.last_save = prev
             raise
+        intro.commit(number)
         self.cleanup(path)
         return path, min(length, want + 1.0)
 

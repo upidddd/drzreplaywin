@@ -534,6 +534,9 @@ class Window(QMainWindow):
         row.add_suffix(name)
         g.add(row)
         g.add(self.combo("Format", "container", FORMAT))
+        intro_row = self.switch("Intro", "intro", "Replay number and date in the corner for the first seconds")
+        intro_row.add_suffix(W.IconButton("play", "Preview", self.preview_intro))
+        g.add(intro_row)
         lay.addWidget(g)
 
         g = W.Group("Cleanup", "Oldest clips are deleted when a limit is reached")
@@ -570,6 +573,29 @@ class Window(QMainWindow):
         lay.addWidget(g)
         lay.addStretch(1)
         return page
+
+    def preview_intro(self):
+        """Render the intro over a plain background and open it in the video player."""
+        from ..recorder import intro
+
+        def work():
+            clip = os.path.join(C.DATA_DIR, "intro-preview.mov")
+            out = os.path.join(C.DATA_DIR, "intro-preview.mp4")
+            try:
+                os.makedirs(C.DATA_DIR, exist_ok=True)
+                intro.render(clip, intro.next_number(self.cfg))
+                x, y = intro.position(1080)
+                fc = ("gradients=s=1920x1080:c0=0x3a4552:c1=0x1d2229:x0=0:y0=0:x1=1920:y1=1080:speed=0.01:r=30:d=4[bg];"
+                      f"[0:v]setpts=PTS-STARTPTS+{intro.START}/TB[ov];"
+                      f"[bg][ov]overlay={x}:{y}:eof_action=pass,format=yuv420p[v]")
+                r = system.run([system.ffmpeg(), "-v", "error", "-y", "-i", clip, "-filter_complex", fc,
+                                "-map", "[v]", "-t", "4", "-c:v", "libx264", "-preset", "veryfast", out], timeout=60)
+                if r and r.returncode == 0:
+                    system.open_path(out)
+            except Exception as e:
+                self.app.recorder.log(f"intro preview failed: {e}")
+
+        threading.Thread(target=work, daemon=True).start()
 
     def update_sensitivity(self):
         for w in (self.out_row, self.out_vol):

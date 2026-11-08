@@ -38,6 +38,9 @@ The Windows twin of [DrzReplay for Linux](https://github.com/upidddd/drzreplay).
   (NVIDIA NVENC, AMD AMF or Intel Quick Sync), so games keep their FPS.
   The last minute lives in RAM, the disk is only touched when you save.
 - **Instant saves.** A clip is cut from memory without re-encoding — it's on disk in a second.
+- **Intro.** Optionally, *REPLAY #12* and the date slide out in the top-left corner for the first
+  couple of seconds of every replay. No sound. (With the intro on, the clip is encoded again on the
+  graphics card, which takes a few seconds.)
 - **One key.** Alt+Z (or any key you pick) works everywhere, including fullscreen games.
   Press it twice and you get two clips — nothing is lost.
 - **No repeats.** A replay empties the buffer: if 15 seconds passed since the last replay, the next one
@@ -195,7 +198,8 @@ Run from source: `set PYTHONPATH=src` and `python -m drzreplaywin` (needs `ffmpe
 ## Credits
 
 FFmpeg ([GPL](https://ffmpeg.org/legal.html), builds by [BtbN](https://github.com/BtbN/FFmpeg-Builds)),
-Qt / PySide6 (LGPL), PortAudio via PyAudioWPatch. Click sound "Mechanical Sounds" by Brian MacIntosh (CC0).
+Qt / PySide6 (LGPL), PortAudio via PyAudioWPatch, Pillow. Click sound "Mechanical Sounds" by Brian MacIntosh (CC0).
+Fonts Oswald and Inter (SIL OFL).
 Icons after [Lucide](https://lucide.dev) (ISC). Details in
 [`src/drzreplaywin/assets/CREDITS.txt`](src/drzreplaywin/assets/CREDITS.txt).
 

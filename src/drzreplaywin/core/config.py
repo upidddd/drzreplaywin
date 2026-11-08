@@ -94,6 +94,7 @@ DEFAULTS = {
     "click_sound": True,
     "notifications": True,
     "record_hotkey": "Alt+R",     # start / stop recording a full video
+    "intro": False,               # replay number and date in the corner for the first seconds
     "replay_since_last": True,    # a replay empties the buffer: the next one has only what came after it
     "tray_hint_shown": False,
 }

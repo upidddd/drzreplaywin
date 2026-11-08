@@ -28,7 +28,7 @@ class SelfTest:
         app.event.connect(self.on_event)
         self.steps = iter([self.wait_recording, self.wait_buffer, self.save, self.wait_saved, self.hotkey,
                            self.wait_hotkey, self.record, self.wait_record_stop, self.wait_recorded,
-                           self.screenshots, self.finish])
+                           self.intro_save, self.wait_intro, self.screenshots, self.finish])
         self.step = next(self.steps)
         self.deadline = time.monotonic() + 120
         self.timer = QTimer(interval=250, timeout=self.tick)
@@ -131,6 +131,26 @@ class SelfTest:
             self.log(f"recorded {self.recorded[0]}, {d:.2f} s")
             return True
 
+    def intro_save(self):
+        self.app.cfg["intro"] = True
+        self.before_intro = len(self.saved)
+        self.log("saving a replay with the intro")
+        return self.app.save_replay()
+
+    def wait_intro(self):
+        if len(self.saved) > self.before_intro:
+            clip = self.saved[-1]
+            d = system.media_duration(clip["path"])
+            # a frame while the intro is on screen, for a look at the artifact
+            shot = os.path.join(self.out, "intro-frame.png")
+            system.run([system.ffmpeg(), "-v", "error", "-y", "-ss", "1.2", "-i", clip["path"], "-frames:v", "1",
+                        "-vf", "crop=iw/2:ih/3:0:0", shot], timeout=30)
+            ok = d > 0.5 and os.path.exists(shot)
+            self.report["intro"] = f"{d:.2f} s, frame {'saved' if os.path.exists(shot) else 'MISSING'} " \
+                                   f"({'ok' if ok else 'FAILED'})"
+            self.log(f"intro clip {clip}, {d:.2f} s")
+            return True
+
     def screenshots(self):
         app = self.app
         app.show_window()
@@ -164,7 +184,8 @@ class SelfTest:
         if ok is None:
             clip = self.saved[0] if self.saved else {}
             ok = 5.0 <= clip.get("duration", 0) <= 8.0 and "ok" in self.report.get("recording", "") and \
-                "TOO" not in self.report.get("since_last", "")
+                "TOO" not in self.report.get("since_last", "") and \
+                "ok" in self.report.get("intro", "")
         self.report["ok"] = bool(ok)
         self.report["status"] = rec.status()
         self.report["recorder_log"] = rec.log_lines[-120:]
