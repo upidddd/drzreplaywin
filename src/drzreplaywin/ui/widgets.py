@@ -35,6 +35,9 @@ ICONS = {
     "chevron": '<path d="m6 9 6 6 6-6"/>',
     "chevron-up": '<path d="m18 15-6-6-6 6"/>',
     "play": '<path d="M7 4.5v15l12-7.5z" fill="C"/>',
+    "scissors": '<circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/>',
+    "pencil": '<path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/><path d="m15 5 4 4"/>',
+    "flag": '<path d="M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.33 2q2 0 3.67-.8a1 1 0 0 1 1 .8v11a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.53"/>',
 }
 
 
@@ -132,21 +135,21 @@ QToolButton#tab {{ background: transparent; border: none; border-radius: 6px; pa
 QToolButton#tab:hover {{ background: {hover}; color: {text}; }}
 QToolButton#tab:checked {{ color: {text}; font-weight: 600; }}
 
-QComboBox, QSpinBox, QLineEdit {{ background: {control}; border: 1px solid {control_border}; border-radius: 5px; padding: 4px 10px; min-height: 22px; selection-background-color: {accent}; selection-color: {accent_text}; }}
-QComboBox:hover, QSpinBox:hover, QLineEdit:hover {{ background: {control_hover}; }}
-QLineEdit:focus, QSpinBox:focus {{ border-bottom: 2px solid {accent}; }}
+QComboBox, QAbstractSpinBox, QLineEdit {{ background: {control}; border: 1px solid {control_border}; border-radius: 5px; padding: 4px 10px; min-height: 22px; selection-background-color: {accent}; selection-color: {accent_text}; }}
+QComboBox:hover, QAbstractSpinBox:hover, QLineEdit:hover {{ background: {control_hover}; }}
+QLineEdit:focus, QAbstractSpinBox:focus {{ border-bottom: 2px solid {accent}; }}
 QComboBox {{ min-width: 150px; padding-right: 28px; }}
 QComboBox::drop-down {{ border: none; width: 28px; }}
 QComboBox::down-arrow {{ image: url("{down}"); width: 12px; height: 12px; }}
 QComboBox QAbstractItemView {{ background: {card}; border: 1px solid {control_border}; border-radius: 6px; padding: 4px; outline: 0; selection-background-color: {hover}; selection-color: {text}; }}
 QComboBox QAbstractItemView::item {{ min-height: 30px; padding: 0 8px; border-radius: 4px; }}
-QSpinBox {{ padding-left: 8px; padding-right: 24px; min-width: 70px; }}
-QSpinBox::up-button, QSpinBox::down-button {{ border: none; background: transparent; width: 22px; subcontrol-origin: border; }}
-QSpinBox::up-button {{ subcontrol-position: top right; margin: 3px 2px 0 0; }}
-QSpinBox::down-button {{ subcontrol-position: bottom right; margin: 0 2px 3px 0; }}
-QSpinBox::up-button:hover, QSpinBox::down-button:hover {{ background: {hover}; border-radius: 3px; }}
-QSpinBox::up-arrow {{ image: url("{up}"); width: 10px; height: 10px; }}
-QSpinBox::down-arrow {{ image: url("{down}"); width: 10px; height: 10px; }}
+QAbstractSpinBox {{ padding-left: 8px; padding-right: 24px; min-width: 70px; }}
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ border: none; background: transparent; width: 22px; subcontrol-origin: border; }}
+QAbstractSpinBox::up-button {{ subcontrol-position: top right; margin: 3px 2px 0 0; }}
+QAbstractSpinBox::down-button {{ subcontrol-position: bottom right; margin: 0 2px 3px 0; }}
+QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {{ background: {hover}; border-radius: 3px; }}
+QAbstractSpinBox::up-arrow {{ image: url("{up}"); width: 10px; height: 10px; }}
+QAbstractSpinBox::down-arrow {{ image: url("{down}"); width: 10px; height: 10px; }}
 
 QSlider {{ min-height: 22px; }}
 QSlider::groove:horizontal {{ height: 4px; background: {track}; border-radius: 2px; }}
@@ -345,6 +348,7 @@ class Group(QWidget):
         while self.rows.count():
             w = self.rows.takeAt(0).widget()
             if w:
+                w.hide()                 # deleted later: until then it would still be drawn over the new rows
                 w.deleteLater()
         self.items = []
 

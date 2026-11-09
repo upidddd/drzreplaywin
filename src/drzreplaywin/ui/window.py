@@ -6,15 +6,16 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from PySide6.QtCore import QMimeData, QPoint, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QMimeData, QObject, QPoint, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDrag, QIcon, QKeySequence, QPixmap
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QDialog, QFileDialog, QHBoxLayout, QLabel,
-                               QLineEdit, QMainWindow, QProgressBar, QPushButton, QScrollArea, QSlider, QSpinBox,
-                               QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
+                               QHBoxLayout, QLabel, QLineEdit, QMainWindow, QProgressBar, QPushButton, QScrollArea,
+                               QSlider, QSpinBox, QStackedWidget, QVBoxLayout, QWidget)
 
 from ..core import autostart, system
 from ..core import config as C
 from ..recorder import hotkey as HK
+from ..recorder import trim as TR
 from . import widgets as W
 from .widgets import T
 
@@ -94,13 +95,20 @@ class ThumbLoader(QWidget):
 
 class ClipRow(W.Row):
     def __init__(self, win, path, mtime, size):
-        super().__init__(human_date(mtime), human_size(size), activatable=True)
-        self.path, self.size = path, size
+        # clips the user renamed show their name, the others the date they were saved
+        self.named = not TR.is_auto_name(path)
+        title = os.path.splitext(os.path.basename(path))[0] if self.named else human_date(mtime)
+        self.date = human_date(mtime) if self.named else None
+        super().__init__(title, " · ".join(filter(None, (self.date, human_size(size)))), activatable=True)
+        self.path, self.size, self.duration = path, size, 0.0
+        self.title.setTextFormat(Qt.PlainText)
         self.setToolTip(os.path.basename(path))
         self.thumb = QLabel()
         self.thumb.setObjectName("thumb")
         self.thumb.setFixedSize(96, 54)
         self.add_prefix(self.thumb)
+        self.add_suffix(W.IconButton("scissors", "Trim", lambda: win.trim_clip(path, self.duration)))
+        self.add_suffix(W.IconButton("pencil", "Rename", lambda: win.rename_clip(path)))
         self.add_suffix(W.IconButton("copy", "Copy (paste into Discord, Telegram…)", lambda: win.copy_clip(path)))
         self.add_suffix(W.IconButton("folder", "Show in folder", lambda: system.show_in_folder(path)))
         self.add_suffix(W.IconButton("trash", "Move to Recycle Bin", lambda: win.trash_clip(path)))
@@ -113,7 +121,8 @@ class ClipRow(W.Row):
             if not pm.isNull():
                 self.thumb.setPixmap(W.rounded(pm, 96, 54))
         if dur:
-            self.set_subtitle(f"{human_time(dur)} · {human_size(self.size)}")
+            self.duration = dur
+            self.set_subtitle(" · ".join(filter(None, (self.date, human_time(dur), human_size(self.size)))))
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
@@ -137,6 +146,177 @@ class ClipRow(W.Row):
             return
         self._press = None
         super().mouseReleaseEvent(e)
+
+
+class FrameLoader(QObject):
+    """Grabs preview frames with ffmpeg in a thread; when asked faster than it can, only the latest counts."""
+    ready = Signal(float, bytes)
+
+    def __init__(self, path):
+        super().__init__()
+        self.path, self.q, self.alive = path, queue.Queue(), True
+        threading.Thread(target=self.work, daemon=True, name="trim-frames").start()
+
+    def request(self, t):
+        self.q.put(t)
+
+    def stop(self):
+        self.alive = False
+        self.q.put(None)
+
+    def work(self):
+        while True:
+            t = self.q.get()
+            while not self.q.empty():
+                t = self.q.get()
+            if t is None or not self.alive:
+                return
+            jpg = TR.frame(self.path, t)
+            if jpg and self.alive:
+                self.ready.emit(t, jpg)
+
+
+class TrimDialog(QDialog):
+    """Pick a start and an end on the clip's timeline, watching the frames; the piece is saved as a new file."""
+    STEP = 10                            # timeline steps per second
+
+    def __init__(self, parent, path, dur):
+        super().__init__(parent)
+        self.setWindowTitle("Trim")
+        self.dur = dur
+        self.frames = FrameLoader(path)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 18)
+        lay.setSpacing(12)
+        lay.addWidget(W.label(os.path.splitext(os.path.basename(path))[0], "big"))
+        self.preview = QLabel()
+        self.preview.setObjectName("thumb")
+        self.preview.setFixedSize(528, 297)
+        self.preview.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self.preview, 0, Qt.AlignHCenter)
+
+        line = QHBoxLayout()
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setRange(0, int(dur * self.STEP))
+        self.slider.valueChanged.connect(self.scrubbed)
+        line.addWidget(self.slider, 1)
+        self.pos_label = W.label("", "subtitle")
+        self.pos_label.setMinimumWidth(90)
+        self.pos_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        line.addWidget(self.pos_label)
+        lay.addLayout(line)
+
+        group = W.Group()
+        self.start = self.time_row(group, "Start", 0.0)
+        self.end = self.time_row(group, "End", dur)
+        delete = W.Row("Delete the original")
+        self.delete = delete.add_suffix(W.Switch(False))
+        group.add(delete)
+        lay.addWidget(group)
+
+        buttons = QHBoxLayout()
+        self.length = W.label("", "subtitle")
+        buttons.addWidget(self.length, 1)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        buttons.addWidget(cancel)
+        self.save = QPushButton("Save trimmed copy")
+        self.save.setObjectName("accent")
+        self.save.setDefault(True)
+        self.save.clicked.connect(self.accept)
+        buttons.addWidget(self.save)
+        lay.addSpacing(4)
+        lay.addLayout(buttons)
+
+        self.frames.ready.connect(self.show_frame)
+        self.finished.connect(lambda _r: self.frames.stop())
+        self.changed()
+        self.scrubbed(0)
+
+    def time_row(self, group, title, value):
+        row = W.Row(title)
+        box = QDoubleSpinBox()
+        box.setRange(0, round(self.dur, 1))
+        box.setDecimals(1)
+        box.setSingleStep(0.1)
+        box.setSuffix(" s")
+        box.setFixedWidth(110)
+        box.setValue(round(value, 1))          # before connecting: the dialog isn't built yet
+        box.valueChanged.connect(lambda v: (self.changed(), self.slider.setValue(round(v * self.STEP))))
+        row.add_suffix(box)
+        row.add_suffix(W.IconButton("flag", "Use the current position",
+                                    lambda: box.setValue(self.slider.value() / self.STEP)))
+        group.add(row)
+        return box
+
+    def scrubbed(self, v):
+        t = v / self.STEP
+        self.pos_label.setText(f"{human_time_exact(t)} / {human_time_exact(self.dur)}")
+        self.frames.request(min(t, max(0.0, self.dur - 0.05)))
+
+    def show_frame(self, _t, jpg):
+        pm = QPixmap()
+        if pm.loadFromData(jpg):
+            self.preview.setPixmap(W.rounded(pm, *_fit(pm, self.preview.width(), self.preview.height()), radius=6))
+
+    def changed(self):
+        a, b = self.start.value(), self.end.value()
+        ok = b - a >= 0.5
+        self.save.setEnabled(ok)
+        self.length.setText(f"New length {human_time_exact(b - a)}" if ok else "The end must be after the start")
+
+    def values(self):
+        return self.start.value(), self.end.value(), self.delete.isChecked()
+
+
+class RenameDialog(QDialog):
+    def __init__(self, parent, path):
+        super().__init__(parent)
+        self.setWindowTitle("Rename")
+        self.path, self.new_path = path, None
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(28, 24, 28, 20)
+        lay.setSpacing(8)
+        lay.addWidget(W.label("Rename clip", "big"))
+        self.entry = QLineEdit(os.path.splitext(os.path.basename(path))[0])
+        self.entry.selectAll()
+        self.entry.textChanged.connect(lambda _t: self.error.setText(""))
+        lay.addWidget(self.entry)
+        self.error = W.label("", "subtitle")
+        lay.addWidget(self.error)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        buttons.addWidget(cancel)
+        ok = QPushButton("Rename")
+        ok.setObjectName("accent")
+        ok.setDefault(True)
+        ok.clicked.connect(self.rename)
+        buttons.addWidget(ok)
+        lay.addSpacing(8)
+        lay.addLayout(buttons)
+        self.setMinimumWidth(420)
+
+    def rename(self):
+        try:
+            self.new_path = TR.rename(self.path, self.entry.text())
+        except ValueError as e:
+            self.error.setText(str(e))
+            return
+        self.accept()
+
+
+def human_time_exact(sec):
+    return f"{int(sec) // 60}:{sec % 60:04.1f}"
+
+
+def _fit(pm, w, h):
+    """Size of pm scaled into w×h, keeping its shape."""
+    if pm.isNull() or not pm.width() or not pm.height():
+        return w, h
+    k = min(w / pm.width(), h / pm.height())
+    return round(pm.width() * k), round(pm.height() * k)
 
 
 class HotkeyDialog(QDialog):
@@ -201,6 +381,8 @@ class HotkeyDialog(QDialog):
 
 
 class Window(QMainWindow):
+    clips_changed = Signal(str)          # from worker threads: a message for the toast, then the list is reloaded
+
     def __init__(self, app):
         super().__init__()
         self.app = app
@@ -258,6 +440,7 @@ class Window(QMainWindow):
 
         self.thumbs = ThumbLoader()
         self.thumbs.done.connect(self.thumb_ready)
+        self.clips_changed.connect(lambda text: (self.toast.show_text(text, 4000), self.load_clips(True)))
         self.update_sensitivity()
         self.timer = QTimer(self, interval=1000, timeout=self.poll)
         self.timer.start()
@@ -501,6 +684,36 @@ class Window(QMainWindow):
     def copy_clip(self, path):
         QApplication.clipboard().setMimeData(file_mime(path))
         self.toast.show_text("Copied — paste it into a chat")
+
+    def trim_clip(self, path, dur):
+        dur = dur or system.media_duration(path)
+        if dur < 1:
+            self.toast.show_text("Can't read this clip")
+            return
+        dlg = TrimDialog(self, path, dur)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        a, b, rm = dlg.values()
+        self.toast.show_text("Trimming…", 60000)
+        enc = (self.app.recorder.info or {}).get("encoder") or system.pick_encoder(system.probe(),
+                                                                                    self.cfg["encoder"])
+        cfg = dict(self.cfg)
+
+        def work():
+            try:
+                out = TR.trim(cfg, enc, path, a, b, rm)
+                self.clips_changed.emit(f"Saved {os.path.basename(out)}")
+            except Exception as e:
+                self.app.recorder.log(f"trim failed: {e}")
+                self.clips_changed.emit(f"Couldn't trim: {e}")
+
+        threading.Thread(target=work, daemon=True, name="trim").start()
+
+    def rename_clip(self, path):
+        dlg = RenameDialog(self, path)
+        if dlg.exec() == QDialog.Accepted and dlg.new_path != path:
+            self.toast.show_text("Renamed")
+            self.load_clips(True)
 
     def trash_clip(self, path):
         from PySide6.QtCore import QFile

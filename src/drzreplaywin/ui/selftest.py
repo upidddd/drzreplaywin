@@ -29,7 +29,7 @@ class SelfTest:
         self.steps = iter([self.wait_recording, self.wait_buffer, self.save, self.wait_saved, self.hotkey,
                            self.wait_hotkey, self.record, self.wait_record_stop, self.wait_recorded,
                            self.intro_save, self.wait_intro, self.paused_record, self.wait_paused_stop,
-                           self.wait_paused_recorded, self.screenshots, self.finish])
+                           self.wait_paused_recorded, self.trim_rename, self.screenshots, self.finish])
         self.step = next(self.steps)
         self.deadline = time.monotonic() + 120
         self.timer = QTimer(interval=250, timeout=self.tick)
@@ -180,6 +180,22 @@ class SelfTest:
             self.app.resume()
             return True
 
+    def trim_rename(self):
+        """Clips tab: trim 1…4 s out of the first replay with the recorder's encoder, then rename the result."""
+        from ..recorder import trim as TR
+        try:
+            enc = (self.app.recorder.info or {}).get("encoder")
+            out = TR.trim(self.app.cfg, enc, self.saved[0]["path"], 1.0, 4.0)
+            d = system.media_duration(out)
+            new = TR.rename(out, "my clip")
+            ok = 2.8 <= d <= 3.3 and os.path.exists(new) and not TR.is_auto_name(new)
+            self.report["trim_rename"] = f"{d:.2f} s for 3 s with {enc}, renamed to {os.path.basename(new)} " \
+                                         f"({'ok' if ok else 'WRONG'})"
+        except Exception as e:
+            self.report["trim_rename"] = f"failed: {e} (WRONG)"
+        self.log(f"trim + rename: {self.report['trim_rename']}")
+        return True
+
     def screenshots(self):
         app = self.app
         app.show_window()
@@ -201,6 +217,15 @@ class SelfTest:
             app.qapp.processEvents()
             time.sleep(0.05)
         app.overlay.grab().save(os.path.join(self.out, "overlay.png"))
+        from .window import TrimDialog
+        dlg = TrimDialog(win, self.saved[0]["path"], system.media_duration(self.saved[0]["path"]))
+        dlg.show()
+        dlg.slider.setValue(25)
+        for _ in range(40):
+            app.qapp.processEvents()
+            time.sleep(0.05)
+        dlg.grab().save(os.path.join(self.out, "trim.png"))
+        dlg.reject()
         self.log("screenshots taken")
         return True
 
@@ -214,7 +239,8 @@ class SelfTest:
             clip = self.saved[0] if self.saved else {}
             ok = 5.0 <= clip.get("duration", 0) <= 8.0 and "ok" in self.report.get("recording", "") and \
                 "TOO" not in self.report.get("since_last", "") and \
-                "ok" in self.report.get("intro", "") and "ok" in self.report.get("paused_recording", "")
+                "ok" in self.report.get("intro", "") and "ok" in self.report.get("paused_recording", "") and \
+                "ok" in self.report.get("trim_rename", "")
         self.report["ok"] = bool(ok)
         self.report["status"] = rec.status()
         self.report["recorder_log"] = rec.log_lines[-120:]

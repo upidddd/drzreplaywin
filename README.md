@@ -51,6 +51,8 @@ The Windows twin of [DrzReplay for Linux](https://github.com/upidddd/drzreplay).
   and your microphone, each with its own volume.
 - **Clips tab.** Thumbnails, length and size of every clip. Click to play, **drag a clip
   straight into Discord or Telegram**, copy it, show it in Explorer or move it to the Recycle Bin.
+- **Trim.** The scissors on a clip open it on a timeline: pick the start and the end, get a trimmed copy.
+- **Rename.** The pencil gives a clip your own name; the list shows it instead of the date.
 - **Clean up by itself.** Keep only the last N clips or at most N GB.
 - **Updates.** When a new version is out you get a notification and an *Update* button;
   one click installs it and the recorder comes back by itself.
@@ -167,7 +169,7 @@ DrzReplayWIN.exe quit             stop recording and close
 src/drzreplaywin/
 ├── __main__.py        command line, single instance
 ├── core/              settings, paths, screen / encoder probing, autostart, update check
-├── recorder/          ffmpeg recorder, in-memory ring buffer, sound capture, hotkey
+├── recorder/          ffmpeg recorder, in-memory ring buffer, sound capture, hotkey, trimming
 ├── ui/                window (Record / Clips / Settings), tray, theme, self-test
 └── assets/            icons, click sound
 packaging/
