@@ -79,6 +79,13 @@ jobs:
           if (-not (Test-Path $exe)) { throw 'not installed' }
           Start-Sleep 8
           Get-Process DrzReplayWIN -ErrorAction SilentlyContinue | Format-Table Id, ProcessName
+          $old = (Get-Process DrzReplayWIN | Select-Object -First 1).Id
+          $r = Start-Process $exe -ArgumentList 'restart' -PassThru
+          $r.WaitForExit(30000) | Out-Null
+          Start-Sleep 10
+          $new = (Get-Process DrzReplayWIN -ErrorAction SilentlyContinue | Select-Object -First 1).Id
+          Write-Host "restart: $old -> $new"
+          if (-not $new -or $new -eq $old) { throw 'restart did not start a new copy' }
           $q = Start-Process $exe -ArgumentList 'quit' -PassThru
           $q.WaitForExit(30000) | Out-Null
           Write-Host "quit -> $($q.ExitCode)"

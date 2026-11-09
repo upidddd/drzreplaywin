@@ -572,6 +572,10 @@ class Window(QMainWindow):
         g.add(self.ver_row)
         lay.addWidget(g)
         lay.addStretch(1)
+        egg = W.label("privet mmpd", "dim")
+        egg.setAlignment(Qt.AlignHCenter)
+        egg.setStyleSheet("font-size: 11px; margin: 14px 0 4px 0;")
+        lay.addWidget(egg)
         return page
 
     def preview_intro(self):
@@ -611,8 +615,9 @@ class Window(QMainWindow):
     def poll(self):
         st = self.app.recorder.status()
         state = st["state"]
-        recording = state == "recording"
-        self.rec_switch.set_quiet(state in ("recording", "starting", "probing"))
+        replays_off = st["replays_off"]
+        recording = state == "recording" and not replays_off
+        self.rec_switch.set_quiet(state in ("recording", "starting", "probing") and not replays_off)
         self.rec_dot.set_on(recording)
         if recording:
             w, h = st["size"] or (0, 0)
@@ -623,8 +628,8 @@ class Window(QMainWindow):
             self.rec_row.set_subtitle("Checking the graphics card…")
         elif state == "starting":
             self.rec_row.set_subtitle("Starting…")
-        elif state == "paused":
-            self.rec_row.set_subtitle("Paused")
+        elif state == "paused" or replays_off:
+            self.rec_row.set_subtitle("Off · Start recording still works")
         elif state == "error":
             self.rec_row.set_subtitle(st["error"] or "Error")
         else:
@@ -649,7 +654,7 @@ class Window(QMainWindow):
             self.rec_btn.setProperty("active", bool(rec))
             self.rec_btn.style().unpolish(self.rec_btn)
             self.rec_btn.style().polish(self.rec_btn)
-        self.rec_btn.setEnabled(recording or bool(rec))
+        self.rec_btn.setEnabled(state in ("recording", "paused", "off") or bool(rec))
         self.load_clips()
 
     def on_rec_switch(self, on):

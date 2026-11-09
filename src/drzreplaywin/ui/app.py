@@ -1,6 +1,7 @@
 """The running app: owns the settings, the recorder, the hotkey, the tray and the window."""
 import os
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -108,7 +109,9 @@ class App(QObject):
         self.tray.update()
 
     def resume(self):
-        if self.recorder.state in ("paused", "error", "off"):
+        if self.recorder.rec_only:           # turned on during a recording: the capture is already up
+            self.recorder.rec_only = False
+        elif self.recorder.state in ("paused", "error", "off"):
             self.recorder.start()
         self.tray.update()
 
@@ -123,14 +126,14 @@ class App(QObject):
             return True
         if self.recorder.start_file():
             return True
-        self.badge("Turn recording on first", ok=False)
+        self.badge("The recorder isn't working", self.recorder.error or "", ok=False)
         return False
 
     def save_replay(self):
         if self.recorder.save():
             return True
         st = self.recorder.state
-        msg = "Recording is paused" if st == "paused" else "Nothing recorded yet" if st != "error" else \
+        msg = "Replays are off" if st == "paused" or self.recorder.rec_only else "Nothing recorded yet" if st != "error" else \
             "Not recording: " + (self.recorder.error or "error")
         self.badge(msg, ok=False)
         return False
@@ -157,6 +160,14 @@ class App(QObject):
             self.set("tray_hint_shown", True)
             self.tray.showMessage(C.APP_NAME, "Still recording here in the tray. Right click it to quit.",
                                   QIcon(C.ICON_PATH), 5000)
+
+    def restart(self):
+        """Start the whole app over (when something got stuck): a new copy waits for this one to close."""
+        cmd = [sys.executable] if C.FROZEN else [sys.executable, "-m", "drzreplaywin"]
+        cmd += ["--background", "--after", str(os.getpid())]
+        subprocess.Popen(cmd, creationflags=0x00000008 if C.WINDOWS else 0,     # DETACHED_PROCESS
+                         cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))) if not C.FROZEN else None)
+        self.quit()
 
     def quit(self, code=0):
         if self._quitting:
@@ -311,6 +322,8 @@ class App(QObject):
             pass
         elif cmd[0] == "quit":
             QTimer.singleShot(0, self.quit)
+        elif cmd[0] == "restart":
+            QTimer.singleShot(0, self.restart)
         sock.write(b"ok\n" if ok else b"fail\n")
         sock.flush()
         sock.waitForBytesWritten(500)

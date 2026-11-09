@@ -28,7 +28,8 @@ class SelfTest:
         app.event.connect(self.on_event)
         self.steps = iter([self.wait_recording, self.wait_buffer, self.save, self.wait_saved, self.hotkey,
                            self.wait_hotkey, self.record, self.wait_record_stop, self.wait_recorded,
-                           self.intro_save, self.wait_intro, self.screenshots, self.finish])
+                           self.intro_save, self.wait_intro, self.paused_record, self.wait_paused_stop,
+                           self.wait_paused_recorded, self.screenshots, self.finish])
         self.step = next(self.steps)
         self.deadline = time.monotonic() + 120
         self.timer = QTimer(interval=250, timeout=self.tick)
@@ -151,6 +152,34 @@ class SelfTest:
             self.log(f"intro clip {clip}, {d:.2f} s")
             return True
 
+    def paused_record(self):
+        """Replays off, then a full recording: the capture starts just for it and stops after."""
+        self.app.pause()
+        ok = self.app.toggle_recording()
+        self.log(f"recording with replays off: {ok}, state {self.app.recorder.state}")
+        self.prec_at = time.monotonic()
+        return True
+
+    def wait_paused_stop(self):
+        if self.app.recorder.filerec and time.monotonic() - self.prec_at >= 5:
+            self.app.toggle_recording()
+            return True
+        if time.monotonic() - self.prec_at > 40:
+            self.report["paused_recording"] = "never started (WRONG)"
+            return True
+
+    def wait_paused_recorded(self):
+        if self.report.get("paused_recording"):
+            return True
+        if len(self.recorded) >= 2:
+            d = system.media_duration(self.recorded[1]["path"])
+            state = self.app.recorder.state
+            ok = d >= 2 and state == "paused"
+            self.report["paused_recording"] = f"{d:.2f} s, recorder {state} after ({'ok' if ok else 'WRONG'})"
+            self.log(f"replays-off recording {self.recorded[1]}, {d:.2f} s, state {state}")
+            self.app.resume()
+            return True
+
     def screenshots(self):
         app = self.app
         app.show_window()
@@ -185,7 +214,7 @@ class SelfTest:
             clip = self.saved[0] if self.saved else {}
             ok = 5.0 <= clip.get("duration", 0) <= 8.0 and "ok" in self.report.get("recording", "") and \
                 "TOO" not in self.report.get("since_last", "") and \
-                "ok" in self.report.get("intro", "")
+                "ok" in self.report.get("intro", "") and "ok" in self.report.get("paused_recording", "")
         self.report["ok"] = bool(ok)
         self.report["status"] = rec.status()
         self.report["recorder_log"] = rec.log_lines[-120:]

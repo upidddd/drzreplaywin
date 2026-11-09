@@ -40,6 +40,8 @@ class Recorder:
         self.session = 0.0            # when the current ring started (a restart empties it)
         self.last_save = None         # (session, press time) of the last replay
         self.filerec = None           # full recording: {"tmp", "path", "t0", "file"}
+        self.rec_only = False         # replays are off: the screen is captured only for a full recording
+        self.file_pending = False     # that recording starts as soon as the capture is up
         self.saves = queue.Queue()
         threading.Thread(target=self.save_worker, daemon=True, name="saver").start()
 
@@ -89,6 +91,7 @@ class Recorder:
             "state": self.state, "error": self.error,
             "buffered": self.buffered() if self.state == "recording" else 0.0,
             "file_recording": self.filerec["t0"] if self.filerec else None,
+            "replays_off": self.state == "paused" or self.rec_only,
             "seconds": self.cfg["seconds"], "buffer_mb": self.ring.size / (1 << 20),
             "size": self.info.get("size"), "fps": self.info.get("fps"), "encoder": self.info.get("encoder"),
             "audio_off": self.audio_off or (self.mixer is not None and not self.mixer.working),
@@ -139,7 +142,12 @@ class Recorder:
             cmd = self.build_cmd(enc, with_audio)
             self.log("$ " + " ".join(f'"{a}"' if " " in a else a for a in cmd))
             self.ring.seconds = self.cfg["seconds"]
-            self.stop_file()          # a new ffmpeg means a new stream: finish the running recording
+            if self.filerec:          # a new ffmpeg means a new stream: finish the running recording
+                keep = self.rec_only
+                self.rec_only = False
+                self.stop_file()
+                # replays off: that capture only exists for the video, go on in a new file
+                self.rec_only = self.file_pending = keep
             self.ring.reset()
             self.session = time.monotonic()
             try:
@@ -197,6 +205,9 @@ class Recorder:
                 with self.lock:
                     if gen == self.gen:
                         self._set("recording")
+                        if self.file_pending:
+                            self.file_pending = False
+                            self.start_file()
 
     def _read_err(self, proc, mixer):
         for raw in iter(proc.stderr.readline, b""):
@@ -223,7 +234,7 @@ class Recorder:
 
     def save(self):
         """Queue a save; two presses give two clips."""
-        if self.state != "recording" or not self.ring.chunks:
+        if self.state != "recording" or self.rec_only or not self.ring.chunks:
             return False
         self.saves.put(("replay", time.monotonic()))
         return True
@@ -346,7 +357,14 @@ class Recorder:
 
     def start_file(self):
         """Write the stream to disk from now until stopped (same encoder, nothing extra to encode)."""
-        if self.filerec or self.state != "recording" or not self.ring.chunks:
+        if self.filerec or self.file_pending:
+            return False
+        if self.state in ("paused", "off"):
+            # replays are off: capture just for this video, and stop again when it ends
+            self.rec_only = self.file_pending = True
+            self.start()
+            return True
+        if self.state != "recording" or not self.ring.chunks:
             return False
         ext = "mkv" if self.cfg["container"] == "mkv" else "mp4"
         path = self.new_path(ext)
@@ -363,6 +381,11 @@ class Recorder:
 
     def stop_file(self, wait=False):
         rec = self.filerec
+        back_off, self.rec_only = self.rec_only, False
+        if self.file_pending:                # stopped before the capture was even up
+            self.file_pending = False
+            self.stop("paused")
+            return True
         if not rec:
             return False
         self.filerec = None
@@ -370,6 +393,8 @@ class Recorder:
         rec["file"].close()
         rec["length"] = time.time() - rec["t0"]
         self.emit("rec_stopped", None)
+        if back_off:
+            self.stop("paused")              # replays stay off, as they were
         if wait:
             self.finish_file(rec)
         else:
