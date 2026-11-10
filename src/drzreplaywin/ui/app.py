@@ -75,7 +75,7 @@ class App(QObject):
             self.show_window()
             if self.first_run:
                 QTimer.singleShot(400, lambda: self.window.toast.show_text(
-                    f"Recording. Press {self.cfg['hotkey']} to save a replay.", 6000))
+                    f"Replays are on. Press {self.cfg['hotkey']} to save one.", 6000))
         if selftest:
             from .selftest import SelfTest
             self._selftest = SelfTest(self, selftest)

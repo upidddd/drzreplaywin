@@ -473,6 +473,8 @@ class Window(QMainWindow):
     def set(self, key, value):
         if self._busy or self.cfg.get(key) == value:
             return
+        if key == "monitor":
+            self.app.set("screen_picked", True)
         self.app.set(key, value)
         self.update_sensitivity()
 
@@ -535,7 +537,7 @@ class Window(QMainWindow):
         page, lay = self.column()
 
         g = W.Group()
-        self.rec_row = W.Row("Recording", "Starting…")
+        self.rec_row = W.Row("Replays", "Starting…")
         self.rec_dot = self.rec_row.add_prefix(W.Dot())
         self.rec_switch = self.rec_row.add_suffix(W.Switch(True))
         self.rec_switch.toggled.connect(self.on_rec_switch)
@@ -571,7 +573,7 @@ class Window(QMainWindow):
 
         g = W.Group("Video")
         g.add(self.spin("Length", "Seconds kept in memory", "seconds", 10, 600, 5))
-        self.screen_row = g.add(self.combo("Screen", "monitor", [(0, "Main screen")]))
+        self.screen_row = g.add(self.combo("Screen", "monitor", [(-1, "Main screen")]))
         g.add(self.combo("Frame rate", "fps", FPS))
         g.add(self.combo("Quality", "rec_quality", QUALITY))
         self.enc_row = g.add(self.combo("Encoder", "encoder", [("auto", "Auto")]))
@@ -601,9 +603,10 @@ class Window(QMainWindow):
         if sig == self._probe_shown or not st["monitors"]:
             return
         self._probe_shown = sig
-        screens = [(i, f"Screen {i + 1} ({m['w']}×{m['h']})") for i, m in enumerate(st["monitors"])]
+        screens = [(-1, "Main screen")] + [(i, f"Screen {i + 1} ({m['w']}×{m['h']})" + (" · main" if m.get("main") else ""))
+                                           for i, m in enumerate(st["monitors"])]
         self.fill_combo("monitor", self.screen_row.control, screens)
-        self.video_group.set_row_visible(self.screen_row, len(screens) > 1)
+        self.video_group.set_row_visible(self.screen_row, len(st["monitors"]) > 1)
         encs = [("auto", "Auto")] + [(e, system.ENCODER_LABELS[e]) for e in st["encoders"]]
         self.fill_combo("encoder", self.enc_row.control, encs)
 
@@ -842,7 +845,7 @@ class Window(QMainWindow):
         elif state == "starting":
             self.rec_row.set_subtitle("Starting…")
         elif state == "paused" or replays_off:
-            self.rec_row.set_subtitle("Off · Start recording still works")
+            self.rec_row.set_subtitle("Off · turn on to save replays")
         elif state == "error":
             self.rec_row.set_subtitle(st["error"] or "Error")
         else:

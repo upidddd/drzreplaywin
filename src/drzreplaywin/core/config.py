@@ -4,7 +4,7 @@ import os
 import sys
 
 APP_NAME = "DrzReplayWIN"
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 REPO = "upidddd/drzreplaywin"
 INSTALL_CMD = f"irm https://github.com/{REPO}/releases/latest/download/install.ps1 | iex"
 SETUP_URL = f"https://github.com/{REPO}/releases/latest/download/DrzReplayWIN-Setup.exe"
@@ -72,7 +72,7 @@ DEFAULTS = {
     # capture
     "seconds": 60,
     "fps": 60,
-    "monitor": 0,                 # ddagrab output index
+    "monitor": -1,                # ddagrab output index, -1 = the main screen
     "draw_mouse": True,
     "encoder": "auto",            # auto | nvenc | amf | qsv | x264
     "rec_quality": "balanced",
@@ -97,6 +97,7 @@ DEFAULTS = {
     "intro": False,               # replay number and date in the corner for the first seconds
     "replay_since_last": True,    # a replay empties the buffer: the next one has only what came after it
     "tray_hint_shown": False,
+    "screen_picked": False,       # the user chose the screen (before that "monitor" 0 was only the default)
 }
 
 # changing any of these restarts the recorder
@@ -118,6 +119,8 @@ def load():
         pass
     except Exception as e:
         print(f"{APP_NAME}: config is broken ({e}), using defaults", file=sys.stderr)
+    if not cfg["screen_picked"]:
+        cfg["monitor"] = -1          # until 1.1.2 screen 1 was the default even when it wasn't the main one
     if not cfg["output_dir"]:
         cfg["output_dir"] = default_video_dir()
     return cfg

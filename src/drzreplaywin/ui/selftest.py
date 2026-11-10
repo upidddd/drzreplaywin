@@ -69,6 +69,11 @@ class SelfTest:
         if st == "recording":
             self.log(f"recording: {self.app.recorder.status()}")
             self.report["probe"] = self.app.recorder.probe
+            if C.WINDOWS:
+                try:
+                    self.report["dxgi_outputs"] = system._dxgi_outputs()
+                except Exception as e:
+                    self.report["dxgi_outputs"] = f"failed: {e}"
             return True
 
     def wait_buffer(self):

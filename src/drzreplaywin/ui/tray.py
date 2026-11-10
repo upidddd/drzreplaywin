@@ -22,7 +22,7 @@ class Tray(QSystemTrayIcon):
         self.item_save = m.addAction("Save replay", lambda: app.save_replay())
         self.item_record = m.addAction("Start recording", app.toggle_recording)
         m.addSeparator()
-        self.item_pause = m.addAction("Pause", lambda: app.resume() if self.replays_off() else app.pause())
+        self.item_pause = m.addAction("Turn replays off", lambda: app.resume() if self.replays_off() else app.pause())
         m.addSeparator()
         m.addAction("Open folder", app.open_folder)
         m.addAction(f"Open {C.APP_NAME}", app.show_window)
@@ -47,7 +47,7 @@ class Tray(QSystemTrayIcon):
     def update(self):
         a = self.app
         paused = a.paused()
-        self.item_pause.setText("Resume" if self.replays_off() else "Pause")
+        self.item_pause.setText("Turn replays on" if self.replays_off() else "Turn replays off")
         self.item_update.setVisible(bool(a.update_ready))
         if a.update_ready:
             self.item_update.setText(f"Update to {a.update_ready}…")

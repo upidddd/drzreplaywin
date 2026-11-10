@@ -162,7 +162,10 @@ class Recorder:
             if self.mixer:
                 self.mixer.start()
             mons = self.probe["monitors"]
-            m = mons[self.cfg["monitor"]] if 0 <= self.cfg["monitor"] < len(mons) else mons[0]
+            idx = system.screen_index(self.probe, self.cfg)
+            m = mons[idx]
+            if len(mons) > 1:
+                self.log(f"recording screen {idx + 1} of {len(mons)}: {m}")
             self.info = {"size": (m["w"], m["h"]), "fps": self.cfg["fps"], "encoder": enc}
             self.started_at = time.monotonic()
         threading.Thread(target=self._read_err, args=(proc, self.mixer), daemon=True).start()

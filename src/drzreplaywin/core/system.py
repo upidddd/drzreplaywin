@@ -74,6 +74,47 @@ def _dda_outputs():
     return out
 
 
+def _dxgi_outputs():
+    """[(x, y, w, h)] of the screens of the main graphics card in desktop pixels, numbered like ddagrab
+    numbers them. ddagrab only reports sizes; the position tells which one is the main screen (it's at 0, 0)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class GUID(ctypes.Structure):
+        _fields_ = [("a", ctypes.c_uint32), ("b", ctypes.c_uint16), ("c", ctypes.c_uint16), ("d", ctypes.c_ubyte * 8)]
+
+    class OUTPUT_DESC(ctypes.Structure):
+        _fields_ = [("name", ctypes.c_wchar * 32), ("rect", wintypes.RECT), ("attached", wintypes.BOOL),
+                    ("rotation", ctypes.c_uint), ("monitor", wintypes.HMONITOR)]
+
+    def call(obj, index, *args):
+        """COM method `index` of the object's vtable."""
+        vtbl = ctypes.cast(obj, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+        proto = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, *(type(a) for a in args))
+        return proto(vtbl[index])(obj, *args)
+
+    out = []
+    iid = GUID(0x770AAE78, 0xF26F, 0x4DBA, (ctypes.c_ubyte * 8)(0xA8, 0x29, 0x25, 0x3C, 0x83, 0xD1, 0xB3, 0x87))
+    factory, adapter = ctypes.c_void_p(), ctypes.c_void_p()
+    if ctypes.WinDLL("dxgi").CreateDXGIFactory1(ctypes.byref(iid), ctypes.byref(factory)) < 0:
+        return out
+    try:
+        if call(factory, 7, ctypes.c_uint(0), ctypes.byref(adapter)) < 0:           # EnumAdapters
+            return out
+        for i in range(8):
+            output, desc = ctypes.c_void_p(), OUTPUT_DESC()
+            if call(adapter, 7, ctypes.c_uint(i), ctypes.byref(output)) < 0:        # EnumOutputs
+                break
+            if call(output, 7, ctypes.byref(desc)) >= 0:                            # GetDesc
+                r = desc.rect
+                out.append((r.left, r.top, r.right - r.left, r.bottom - r.top))
+            call(output, 2)                                                         # Release
+        call(adapter, 2)
+    finally:
+        call(factory, 2)
+    return out
+
+
 def _gdi_monitors():
     """[(w, h, x, y)] of every monitor, in desktop pixels."""
     import ctypes
@@ -97,10 +138,18 @@ def _x11_screen():
     return [(int(m.group(1)), int(m.group(2)), 0, 0)] if m else [(1920, 1080, 0, 0)]
 
 
+def screen_index(probe, cfg):
+    """The screen to record: the one picked in Settings, else the main one."""
+    mons = probe["monitors"]
+    if 0 <= cfg["monitor"] < len(mons):
+        return cfg["monitor"]
+    return next((i for i, m in enumerate(mons) if m.get("main")), 0)
+
+
 def capture_args(probe, cfg, fps=None):
     fps = fps or cfg["fps"]
     mons = probe["monitors"]
-    idx = cfg["monitor"] if 0 <= cfg["monitor"] < len(mons) else 0
+    idx = screen_index(probe, cfg)
     mouse = int(bool(cfg["draw_mouse"]))
     if probe["capture"] == "dda":
         return ["-f", "lavfi", "-i", f"ddagrab=output_idx={idx}:framerate={fps}:draw_mouse={mouse}"]
@@ -143,11 +192,21 @@ def probe(force=False):
     if C.WINDOWS:
         dda = _dda_outputs()
         if dda:
-            capture, mons = "dda", [dict(w=w, h=h, x=0, y=0) for w, h in dda]
+            try:
+                pos = _dxgi_outputs()
+            except Exception:
+                pos = []
+            if [(w, h) for _x, _y, w, h in pos] != dda:          # not the same screens: sizes only
+                pos = [(None, None, w, h) for w, h in dda]
+            capture, mons = "dda", [dict(w=w, h=h, x=x, y=y) for x, y, w, h in pos]
         else:
             capture, mons = "gdi", [dict(w=w, h=h, x=x, y=y) for w, h, x, y in _gdi_monitors()]
     else:
         capture, mons = "x11", [dict(w=w, h=h, x=x, y=y) for w, h, x, y in _x11_screen()]
+    for m in mons:
+        m["main"] = (m["x"], m["y"]) == (0, 0)          # the main screen's corner is the desktop's origin
+    if mons and not any(m["main"] for m in mons):
+        mons[0]["main"] = True
     cap = capture_args({"capture": capture, "monitors": mons}, {"monitor": 0, "draw_mouse": True, "fps": 30})
     encoders = {}
     for enc, variants in FILTERS[capture].items():
