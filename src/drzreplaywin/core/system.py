@@ -88,10 +88,12 @@ def _dxgi_outputs():
                     ("rotation", ctypes.c_uint), ("monitor", wintypes.HMONITOR)]
 
     def call(obj, index, *args):
-        """COM method `index` of the object's vtable."""
+        """COM method `index` of the object's vtable; args are ints (UINT) or ctypes objects passed by pointer."""
         vtbl = ctypes.cast(obj, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
-        proto = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, *(type(a) for a in args))
-        return proto(vtbl[index])(obj, *args)
+        types = [ctypes.c_uint if isinstance(a, int) else ctypes.c_void_p for a in args]
+        values = [a if isinstance(a, int) else ctypes.addressof(a) for a in args]
+        proto = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, *types)
+        return proto(vtbl[index])(obj, *values)
 
     out = []
     iid = GUID(0x770AAE78, 0xF26F, 0x4DBA, (ctypes.c_ubyte * 8)(0xA8, 0x29, 0x25, 0x3C, 0x83, 0xD1, 0xB3, 0x87))
@@ -99,16 +101,16 @@ def _dxgi_outputs():
     if ctypes.WinDLL("dxgi").CreateDXGIFactory1(ctypes.byref(iid), ctypes.byref(factory)) < 0:
         return out
     try:
-        if call(factory, 7, ctypes.c_uint(0), ctypes.byref(adapter)) < 0:           # EnumAdapters
+        if call(factory, 7, 0, adapter) < 0:    # EnumAdapters
             return out
         for i in range(8):
             output, desc = ctypes.c_void_p(), OUTPUT_DESC()
-            if call(adapter, 7, ctypes.c_uint(i), ctypes.byref(output)) < 0:        # EnumOutputs
+            if call(adapter, 7, i, output) < 0:    # EnumOutputs
                 break
-            if call(output, 7, ctypes.byref(desc)) >= 0:                            # GetDesc
+            if call(output, 7, desc) >= 0:    # GetDesc
                 r = desc.rect
                 out.append((r.left, r.top, r.right - r.left, r.bottom - r.top))
-            call(output, 2)                                                         # Release
+            call(output, 2)    # Release
         call(adapter, 2)
     finally:
         call(factory, 2)
