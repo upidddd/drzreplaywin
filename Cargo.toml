@@ -11,7 +11,6 @@ name = "DrzReplayWIN"
 path = "src/main.rs"
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 ab_glyph = "0.2"
@@ -25,6 +24,9 @@ ureq = { version = "2", default-features = false, features = ["native-tls"] }
 native-tls = "0.2"
 winreg = "0.55"
 wasapi = "0.27"
+clipboard-win = "5"
+trash = "5"
+rfd = { version = "0.15", default-features = false }
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dxgi",
@@ -40,6 +42,7 @@ windows = { version = "0.62", features = [
     "Win32_Storage_FileSystem",
     "Win32_Security",
     "Win32_UI_HiDpi",
+    "Win32_System_Console",
 ] }
 
 [target.'cfg(unix)'.dependencies]

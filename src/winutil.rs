@@ -125,3 +125,77 @@ pub fn dpi_scale() -> f32 {
     #[cfg(not(windows))]
     1.0
 }
+
+// ---------------------------------------------------------------- the window's helpers
+/// Virtual-key codes that are held down right now (for the hotkey dialog: any key, any layout).
+pub fn keys_down() -> Vec<u32> {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+        return (0x08u32..=0xFE).filter(|vk| GetAsyncKeyState(*vk as i32) as u16 & 0x8000 != 0).collect();
+    }
+    #[cfg(not(windows))]
+    vec![]
+}
+
+/// Put a file on the clipboard the way Explorer does: paste it into Discord, Telegram…
+pub fn copy_file_to_clipboard(path: &std::path::Path) -> bool {
+    #[cfg(windows)]
+    {
+        use clipboard_win::{formats::FileList, Clipboard, Setter};
+        let p = path.to_string_lossy().into_owned();
+        let Ok(_clip) = Clipboard::new_attempts(10) else { return false };
+        return FileList.write_clipboard(&[p.as_str()]).is_ok();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+/// Move a file to the Recycle Bin.
+pub fn trash(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        trash::delete(path).map_err(|e| e.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::remove_file(path).map_err(|e| e.to_string())
+    }
+}
+
+/// Ask for a folder (a native dialog).
+pub fn pick_folder(start: &std::path::Path, title: &str) -> Option<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        return rfd::FileDialog::new().set_title(title).set_directory(start).pick_folder();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (start, title);
+        None
+    }
+}
+
+/// When started from a terminal, let println! reach it (the program itself has no console window).
+pub fn attach_parent_console() {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
+/// Press (or release) a key as if typed (the self-test presses the hotkey this way).
+pub fn send_key(vk: u32, up: bool) {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY};
+        let input = INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VIRTUAL_KEY(vk as u16), wScan: 0, dwFlags: if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) }, time: 0, dwExtraInfo: 0 } } };
+        SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+    }
+    #[cfg(not(windows))]
+    let _ = (vk, up);
+}

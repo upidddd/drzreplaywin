@@ -61,6 +61,8 @@ pub struct Service {
     st: Mutex<Svc>,
     pub first_run: bool,
     selftest: bool,
+    /// what the recorder reported (kept for the self-test only)
+    pub seen: Mutex<Vec<Ev>>,
 }
 
 impl Service {
@@ -96,6 +98,7 @@ impl Service {
             st: Mutex::new(Svc { update_ready: None, update_progress: None, last_clip: None, last_message: Message::None, devices: None, ui: None, show_requested: false, ui_active_at: None, toasts: vec![], restart_recorder_at: None, quitting: false, ui_was_open: false }),
             first_run,
             selftest,
+            seen: Mutex::new(vec![]),
         });
         {
             let s = svc.clone();
@@ -423,6 +426,9 @@ impl Service {
     }
 
     fn on_rec(&self, e: Ev) {
+        if self.selftest {
+            self.seen.lock().unwrap().push(e.clone());
+        }
         let cfg = self.cfg();
         match e {
             Ev::RecStarted => {
