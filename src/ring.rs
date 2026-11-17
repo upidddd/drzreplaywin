@@ -1,0 +1,315 @@
+//! In-memory ring buffer of the MPEG-TS stream ffmpeg writes to its stdout.
+//!
+//! The stream is cut into chunks that each start at a video keyframe (one per second), so any
+//! run of chunks from the end is a playable video. Nothing touches the disk until a save.
+use std::collections::VecDeque;
+use std::fs::File;
+use std::io::Write;
+use std::sync::Mutex;
+use std::time::Instant;
+
+const TS: usize = 188;
+const VIDEO_PID: usize = 0x100; // ffmpeg's mpegts muxer numbers streams from 0x100, video is mapped first
+const PAT_PID: usize = 0;
+const PMT_PID: usize = 0x1000;
+const PTS_WRAP: i64 = 1 << 33;
+const PTS_HZ: f64 = 90000.0;
+
+/// PTS of the PES packet that starts in this TS packet, or None
+fn pes_pts(pkt: &[u8]) -> Option<i64> {
+    let off = 4 + if pkt[3] & 0x20 != 0 { 1 + pkt[4] as usize } else { 0 };
+    if off + 14 > TS || pkt[off..off + 3] != [0, 0, 1] || pkt[off + 7] & 0x80 == 0 {
+        return None;
+    }
+    let p = &pkt[off + 9..off + 14];
+    Some((((p[0] >> 1) & 7) as i64) << 30 | (p[1] as i64) << 22 | ((p[2] >> 1) as i64) << 15 | (p[3] as i64) << 7 | (p[4] >> 1) as i64)
+}
+
+struct Chunk {
+    pts: i64,
+    t: Instant,
+    data: Vec<u8>,
+}
+
+struct Inner {
+    seconds: f64,
+    max_bytes: usize,
+    chunks: VecDeque<Chunk>,
+    size: usize,
+    pending: Vec<u8>,
+    pat: Vec<u8>,
+    pmt: Vec<u8>,
+    tap: Option<File>, // a file the stream is also written to (full recording)
+    tap_header: bool,
+}
+
+pub struct Ring {
+    inner: Mutex<Inner>,
+}
+
+impl Inner {
+    fn now_pts(&self, now: Instant) -> f64 {
+        let last = self.chunks.back().unwrap();
+        last.pts as f64 + now.duration_since(last.t).as_secs_f64() * PTS_HZ
+    }
+    /// seconds from the start of this chunk to now (by video time, wrap-safe)
+    fn age(&self, pts: i64, now: Instant) -> f64 {
+        ((self.now_pts(now) - pts as f64).rem_euclid(PTS_WRAP as f64)) / PTS_HZ
+    }
+    fn trim(&mut self, now: Instant) {
+        while self.chunks.len() > 1 && (self.age(self.chunks[1].pts, now) >= self.seconds || self.size > self.max_bytes) {
+            let c = self.chunks.pop_front().unwrap();
+            self.size -= c.data.len();
+        }
+    }
+    fn reset(&mut self) {
+        self.chunks.clear();
+        self.size = 0;
+        self.pending.clear();
+        self.pat.clear();
+        self.pmt.clear();
+        self.tap = None;
+        self.tap_header = false;
+    }
+}
+
+fn resync(buf: &[u8], mut i: usize) -> usize {
+    loop {
+        match buf[i + 1..].iter().position(|b| *b == 0x47) {
+            None => return buf.len(),
+            Some(p) => {
+                let j = i + 1 + p;
+                if j + TS >= buf.len() || buf[j + TS] == 0x47 {
+                    return j;
+                }
+                i = j;
+            }
+        }
+    }
+}
+
+impl Ring {
+    pub fn new(seconds: f64, max_bytes: usize) -> Ring {
+        Ring {
+            inner: Mutex::new(Inner {
+                seconds,
+                max_bytes,
+                chunks: VecDeque::new(),
+                size: 0,
+                pending: vec![],
+                pat: vec![],
+                pmt: vec![],
+                tap: None,
+                tap_header: false,
+            }),
+        }
+    }
+
+    pub fn reset(&self) {
+        self.inner.lock().unwrap().reset();
+    }
+    pub fn set_seconds(&self, s: f64) {
+        self.inner.lock().unwrap().seconds = s;
+    }
+    pub fn size(&self) -> usize {
+        self.inner.lock().unwrap().size
+    }
+    pub fn has_chunks(&self) -> bool {
+        !self.inner.lock().unwrap().chunks.is_empty()
+    }
+
+    // ------------------------------------------------------------------ writing
+    pub fn feed(&self, data: &[u8]) {
+        let mut g = self.inner.lock().unwrap();
+        let mut buf = std::mem::take(&mut g.pending);
+        buf.extend_from_slice(data);
+        let mut start = 0;
+        if buf.first() != Some(&0x47) {
+            // lost sync: skip to the next packet start
+            start = resync(&buf, 0).min(buf.len());
+        }
+        let mut n = start + (buf.len() - start) / TS * TS;
+        let mut keys: Vec<usize> = vec![];
+        let (mut pat, mut pmt) = (None, None);
+        let mut i = start;
+        let mut bad = false;
+        while i < n {
+            let p = &buf[i..i + TS];
+            if p[0] != 0x47 {
+                // keep the good part, resync after it
+                n = i;
+                g.pending = buf[resync(&buf, n).min(buf.len())..].to_vec();
+                bad = true;
+                break;
+            }
+            let pid = ((p[1] & 0x1f) as usize) << 8 | p[2] as usize;
+            if pid == VIDEO_PID && p[1] & 0x40 != 0 && p[3] & 0x20 != 0 && p[4] > 0 && p[5] & 0x40 != 0 {
+                keys.push(i);
+            } else if pid == PAT_PID {
+                pat = Some(i);
+            } else if pid == PMT_PID {
+                pmt = Some(i);
+            }
+            i += TS;
+        }
+        if !bad {
+            g.pending = buf[n..].to_vec();
+        }
+        if n <= start {
+            return;
+        }
+        if let Some(i) = pat {
+            g.pat = buf[i..i + TS].to_vec();
+        }
+        if let Some(i) = pmt {
+            g.pmt = buf[i..i + TS].to_vec();
+        }
+        let now = Instant::now();
+        let had_chunk = !g.chunks.is_empty();
+        let mut pos = start;
+        for &i in &keys {
+            if let Some(c) = g.chunks.back_mut() {
+                c.data.extend_from_slice(&buf[pos..i]);
+                g.size += i - pos;
+            }
+            let pts = pes_pts(&buf[i..i + TS]).unwrap_or_else(|| g.chunks.back().map(|c| (c.pts + PTS_HZ as i64) % PTS_WRAP).unwrap_or(0));
+            g.chunks.push_back(Chunk { pts, t: now, data: vec![] });
+            pos = i;
+        }
+        if let Some(c) = g.chunks.back_mut() {
+            c.data.extend_from_slice(&buf[pos..n]);
+            g.size += n - pos;
+        }
+        if g.tap.is_some() && (had_chunk || !keys.is_empty()) {
+            let first = if had_chunk { start } else { keys[0] };
+            if !g.tap_header {
+                let header = [g.pat.clone(), g.pmt.clone()].concat();
+                if let Some(f) = g.tap.as_mut() {
+                    let _ = f.write_all(&header);
+                }
+                g.tap_header = true;
+            }
+            if let Some(f) = g.tap.as_mut() {
+                let _ = f.write_all(&buf[first..n]);
+            }
+        }
+        g.trim(now);
+    }
+
+    /// Also write the stream to f from the current keyframe on (at most a second before now).
+    pub fn start_tap(&self, mut f: File) {
+        let mut g = self.inner.lock().unwrap();
+        g.tap_header = false;
+        if let Some(cur) = g.chunks.back() {
+            if !g.pat.is_empty() && !g.pmt.is_empty() {
+                let _ = f.write_all(&g.pat);
+                let _ = f.write_all(&g.pmt);
+                let _ = f.write_all(&cur.data);
+                g.tap_header = true;
+            }
+        }
+        g.tap = Some(f);
+    }
+
+    pub fn stop_tap(&self) -> Option<File> {
+        self.inner.lock().unwrap().tap.take()
+    }
+
+    // ------------------------------------------------------------------ reading
+    /// how many seconds are in the buffer now
+    pub fn buffered(&self) -> f64 {
+        let g = self.inner.lock().unwrap();
+        match g.chunks.front() {
+            None => 0.0,
+            Some(c) => g.age(c.pts, Instant::now()).min(g.seconds),
+        }
+    }
+
+    /// (ts bytes, length) of the newest chunks covering at least `seconds`, or None
+    pub fn snapshot(&self, seconds: f64) -> Option<(Vec<u8>, f64)> {
+        let g = self.inner.lock().unwrap();
+        if g.chunks.is_empty() || g.pat.is_empty() || g.pmt.is_empty() {
+            return None;
+        }
+        let now = Instant::now();
+        let mut first = 0;
+        for i in (0..g.chunks.len()).rev() {
+            if g.age(g.chunks[i].pts, now) >= seconds {
+                first = i;
+                break;
+            }
+        }
+        let mut out = Vec::with_capacity(g.size + 2 * TS);
+        out.extend_from_slice(&g.pat);
+        out.extend_from_slice(&g.pmt);
+        for c in g.chunks.iter().skip(first) {
+            out.extend_from_slice(&c.data);
+        }
+        Some((out, g.age(g.chunks[first].pts, now)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pkt(pid: usize, pusi: bool, rai: bool, pts: i64) -> Vec<u8> {
+        let mut p = vec![0xffu8; TS];
+        p[0] = 0x47;
+        p[1] = (if pusi { 0x40 } else { 0 }) | (pid >> 8) as u8;
+        p[2] = (pid & 255) as u8;
+        let off;
+        if rai {
+            p[3] = 0x30;
+            p[4] = 7;
+            p[5] = 0x40;
+            off = 12;
+        } else {
+            p[3] = 0x10;
+            off = 4;
+        }
+        if pusi {
+            p[off..off + 3].copy_from_slice(&[0, 0, 1]);
+            p[off + 7] = 0x80;
+            p[off + 9..off + 14].copy_from_slice(&[0x21 | ((pts >> 29) & 0xe) as u8, (pts >> 22) as u8, (((pts >> 14) & 0xfe) | 1) as u8, (pts >> 7) as u8, (((pts << 1) & 0xfe) | 1) as u8]);
+        }
+        p
+    }
+
+    #[test]
+    fn cuts_chunks_at_keyframes_and_keeps_the_newest() {
+        let ring = Ring::new(3.0, 1 << 30);
+        let mut stream = pkt(PAT_PID, false, false, 0);
+        stream.extend(pkt(PMT_PID, false, false, 0));
+        for s in 0..10 {
+            stream.extend(pkt(VIDEO_PID, true, true, s * 90000));
+            for _ in 0..50 {
+                stream.extend(pkt(VIDEO_PID, false, false, 0));
+            }
+        }
+        // odd read sizes, like a pipe gives them
+        for c in stream.chunks(7001) {
+            ring.feed(c);
+        }
+        let g = ring.inner.lock().unwrap();
+        assert!(g.chunks.len() >= 2 && g.chunks.len() <= 11);
+        assert_eq!(g.chunks.back().unwrap().pts, 9 * 90000);
+        assert!(g.chunks.iter().all(|c| c.data.len() % TS == 0 && c.data[0] == 0x47));
+        drop(g);
+        let snap = ring.snapshot(1.0).expect("a snapshot");
+        assert_eq!(snap.0[0], 0x47);
+        assert_eq!(snap.0.len() % TS, 0);
+    }
+
+    #[test]
+    fn resyncs_after_garbage() {
+        let ring = Ring::new(60.0, 1 << 30);
+        let mut stream = vec![0u8, 1, 2, 3, 4];
+        stream.extend(pkt(PAT_PID, false, false, 0));
+        stream.extend(pkt(PMT_PID, false, false, 0));
+        stream.extend(pkt(VIDEO_PID, true, true, 0));
+        stream.extend(pkt(VIDEO_PID, false, false, 0));
+        ring.feed(&stream);
+        assert!(ring.has_chunks());
+    }
+}
