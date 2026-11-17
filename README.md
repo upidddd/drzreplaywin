@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="src/drzreplaywin/assets/icons/drzreplaywin.svg" width="96" alt="">
+<img src="assets/icons/drzreplaywin.svg" width="96" alt="">
 
 # DrzReplayWIN
 
@@ -166,14 +166,20 @@ DrzReplayWIN.exe quit             stop recording and close
 ## Project layout
 
 ```
-src/drzreplaywin/
-├── __main__.py        command line, single instance
-├── core/              settings, paths, screen / encoder probing, autostart, update check
-├── recorder/          ffmpeg recorder, in-memory ring buffer, sound capture, hotkey, trimming
-├── ui/                window (Record / Clips / Settings), tray, theme, self-test
-└── assets/            icons, click sound
+src/
+├── main.rs            command line, single instance
+├── service.rs         the running app: settings, recorder, hotkeys, tray, badge, updates
+├── recorder.rs        ffmpeg recorder, save queue, full recordings
+├── ring.rs            in-memory ring buffer of the MPEG-TS stream
+├── audio.rs           system sound (WASAPI loopback) and microphone, mixed for ffmpeg
+├── system.rs          screen / encoder probing, ffmpeg, update check
+├── hotkey.rs, tray.rs, overlay.rs, winutil.rs   the Windows side: hotkeys, tray icon, corner badge, autostart
+├── intro.rs, trim.rs  the replay intro, trimming and renaming clips
+├── ipc.rs             how the window and the command line talk to the running app
+├── selftest.rs        what CI runs on Windows
+└── ui/                the window (Record / Clips / Settings, egui) with the original's theme
+assets/                icons, click sound, fonts of the intro
 packaging/
-├── DrzReplayWIN.spec  PyInstaller build
 ├── DrzReplayWIN.iss   Inno Setup installer
 └── install.ps1        the one-line installer
 .github/workflows/     builds, tests on Windows and publishes releases
@@ -182,27 +188,25 @@ tools/make_icons.py    renders the .ico from the .svg
 
 ## Building
 
-Every push is built and tested on Windows by GitHub Actions: it records the screen, saves a clip,
-presses the hotkey and takes the screenshots above. Pushing a `v*` tag publishes a release.
+DrzReplayWIN is written in Rust. Every push is built and tested on Windows by GitHub Actions: it records
+the screen, saves a clip, presses the hotkey and takes the screenshots above. Pushing a `v*` tag publishes a release.
 
-Locally on Windows:
+Locally on Windows (Rust and the MSVC build tools):
 
 ```powershell
-pip install -r requirements.txt pyinstaller
-# put ffmpeg.exe into build\ffmpeg\
-python packaging/version_info.py
-pyinstaller --noconfirm --distpath dist --workpath build/pyi packaging/DrzReplayWIN.spec
-iscc packaging/DrzReplayWIN.iss      # -> dist\DrzReplayWIN-Setup.exe
+cargo build --release
+# put ffmpeg.exe next to DrzReplayWIN.exe (in an ffmpeg\ folder works too)
+iscc packaging/DrzReplayWIN.iss      # -> dist\DrzReplayWIN-Setup.exe, after copying the build to dist\DrzReplayWIN\
 ```
 
-Run from source: `set PYTHONPATH=src` and `python -m drzreplaywin` (needs `ffmpeg` on the PATH).
+The window is its own process (`DrzReplayWIN.exe --window`), so the recorder in the tray stays small while it is closed.
 
 ## Credits
 
 FFmpeg ([GPL](https://ffmpeg.org/legal.html), builds by [BtbN](https://github.com/BtbN/FFmpeg-Builds)),
-Qt / PySide6 (LGPL), PortAudio via PyAudioWPatch, Pillow. Click sound "Mechanical Sounds" by Brian MacIntosh (CC0).
+egui, wasapi. Click sound "Mechanical Sounds" by Brian MacIntosh (CC0).
 Fonts Oswald and Inter (SIL OFL).
 Icons after [Lucide](https://lucide.dev) (ISC). Details in
-[`src/drzreplaywin/assets/CREDITS.txt`](src/drzreplaywin/assets/CREDITS.txt).
+[`assets/CREDITS.txt`](assets/CREDITS.txt).
 
 Code: [MIT](LICENSE).

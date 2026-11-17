@@ -4,7 +4,7 @@ name: Build
 # a v* tag: the same, then publish a GitHub release
 on:
   push:
-    branches: [main]
+    branches: [main, rust]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -14,16 +14,24 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
 
-      - name: Python packages
-        run: pip install -r requirements.txt "pyinstaller>=6.11"
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Version
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          "APP_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "version $v"
 
       - name: FFmpeg
         shell: pwsh
@@ -42,10 +50,18 @@ jobs:
           Copy-Item (Get-ChildItem build/ffmpeg-zip -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName build/ffmpeg/
           build/ffmpeg/ffmpeg.exe -hide_banner -version | Select-Object -First 1
 
+      - name: Test
+        run: cargo test --release
+
       - name: Build the app
+        shell: pwsh
         run: |
-          python packaging/version_info.py
-          pyinstaller --noconfirm --distpath dist --workpath build/pyi packaging/DrzReplayWIN.spec
+          cargo build --release
+          New-Item -ItemType Directory -Force dist/DrzReplayWIN/ffmpeg | Out-Null
+          Copy-Item target/release/DrzReplayWIN.exe dist/DrzReplayWIN/
+          Copy-Item build/ffmpeg/ffmpeg.exe dist/DrzReplayWIN/ffmpeg/
+          Get-ChildItem dist/DrzReplayWIN -Recurse -File | Format-Table Name, Length
+          dist/DrzReplayWIN/DrzReplayWIN.exe --version
 
       - name: Self-test (record, save, hotkey, screenshots)
         shell: pwsh
