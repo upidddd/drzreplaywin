@@ -23,6 +23,7 @@ eframe = { version = "0.37", default-features = false, features = ["wgpu", "defa
 ureq = { version = "2", default-features = false, features = ["native-tls"] }
 native-tls = "0.2"
 winreg = "0.55"
+windows-core = "0.62"
 wasapi = "0.27"
 clipboard-win = "5"
 trash = "5"
@@ -43,6 +44,8 @@ windows = { version = "0.62", features = [
     "Win32_Security",
     "Win32_UI_HiDpi",
     "Win32_System_Console",
+    "Win32_System_Ole",
+    "Win32_System_SystemServices",
 ] }
 
 [target.'cfg(unix)'.dependencies]

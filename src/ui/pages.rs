@@ -309,9 +309,10 @@ impl App {
         parts.push(human_size(c.size as f64));
         let sub = parts.join(" · ");
         let mut act: Option<&'static str> = None;
-        let resp = w::row(
+        let resp = w::row_h(
             ui,
             p,
+            74.0,
             &title,
             &sub,
             true,
@@ -331,6 +332,12 @@ impl App {
                 }
             },
         );
+        // dragging the row out of the window: drop the clip into Discord, Telegram, Explorer
+        if resp.drag_started() && act.is_none() {
+            winutil::drag_file(&path);
+            ui.ctx().request_repaint();
+            return;
+        }
         let resp = resp.on_hover_text(path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
         match act {
             Some("trash") => self.trash_clip(&path),

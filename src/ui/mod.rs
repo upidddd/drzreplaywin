@@ -294,7 +294,8 @@ impl App {
                 Some(Step::Tab(t)) => {
                     self.tab = t;
                     sc.at += 1;
-                    sc.wait = 6;
+                    // the clips tab makes thumbnails with ffmpeg first
+                    sc.wait = if t == 1 { 300 } else { 6 };
                 }
                 Some(Step::Trim(p)) => {
                     let dur = sys::media_duration(&p);

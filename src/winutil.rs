@@ -199,3 +199,48 @@ pub fn send_key(vk: u32, up: bool) {
     #[cfg(not(windows))]
     let _ = (vk, up);
 }
+
+/// Drag a file out of the window like Explorer does (it can be dropped into a chat, a folder…).
+/// Returns when the drag is over.
+pub fn drag_file(path: &std::path::Path) {
+    #[cfg(windows)]
+    unsafe {
+        use windows::core::{implement, Result as WinResult, BOOL, HRESULT, HSTRING};
+        use windows::Win32::Foundation::{DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS, S_OK};
+        use windows::Win32::System::Com::IDataObject;
+        use windows::Win32::System::Ole::{DoDragDrop, IDropSource, IDropSource_Impl, OleInitialize, DROPEFFECT, DROPEFFECT_COPY};
+        use windows::Win32::System::SystemServices::{MK_LBUTTON, MODIFIERKEYS_FLAGS};
+        use windows::Win32::UI::Shell::{IShellItem, SHCreateItemFromParsingName, BHID_DataObject};
+
+        #[implement(IDropSource)]
+        struct Source;
+
+        impl IDropSource_Impl for Source_Impl {
+            fn QueryContinueDrag(&self, escape: BOOL, keys: MODIFIERKEYS_FLAGS) -> HRESULT {
+                if escape.as_bool() {
+                    DRAGDROP_S_CANCEL
+                } else if keys.0 & MK_LBUTTON.0 == 0 {
+                    DRAGDROP_S_DROP
+                } else {
+                    S_OK
+                }
+            }
+            fn GiveFeedback(&self, _effect: DROPEFFECT) -> HRESULT {
+                DRAGDROP_S_USEDEFAULTCURSORS
+            }
+        }
+
+        let _ = OleInitialize(None);
+        let go = || -> WinResult<()> {
+            let item: IShellItem = SHCreateItemFromParsingName(&HSTRING::from(path.as_os_str()), None)?;
+            let data: IDataObject = item.BindToHandler(None, &BHID_DataObject)?;
+            let source: IDropSource = Source.into();
+            let mut effect = DROPEFFECT(0);
+            let _ = DoDragDrop(&data, &source, DROPEFFECT_COPY, &mut effect);
+            Ok(())
+        };
+        let _ = go();
+    }
+    #[cfg(not(windows))]
+    let _ = path;
+}

@@ -348,8 +348,13 @@ pub fn progress(ui: &mut Ui, p: &Palette, fraction: f32, width: f32) {
 /// One row of a card: [prefix] title / subtitle … [suffix]. A hovered activatable row gets a highlight.
 #[allow(clippy::too_many_arguments)]
 pub fn row(ui: &mut Ui, p: &Palette, title: &str, sub: &str, activatable: bool, enabled: bool, prefix: impl FnOnce(&mut Ui), suffix: impl FnOnce(&mut Ui)) -> Response {
-    let h = if sub.is_empty() { 52.0 } else { 54.0 };
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), h), if activatable { Sense::click() } else { Sense::hover() });
+    row_h(ui, p, if sub.is_empty() { 52.0 } else { 54.0 }, title, sub, activatable, enabled, prefix, suffix)
+}
+
+/// the same with a given height (clip rows have a thumbnail to fit); an activatable row can be dragged too
+#[allow(clippy::too_many_arguments)]
+pub fn row_h(ui: &mut Ui, p: &Palette, h: f32, title: &str, sub: &str, activatable: bool, enabled: bool, prefix: impl FnOnce(&mut Ui), suffix: impl FnOnce(&mut Ui)) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), h), if activatable { Sense::click_and_drag() } else { Sense::hover() });
     if activatable && resp.hovered() {
         ui.painter().rect_filled(rect.shrink2(vec2(0.0, 0.0)), radius(7.0), p.hover);
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
