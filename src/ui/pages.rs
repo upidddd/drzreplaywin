@@ -14,7 +14,8 @@ use std::sync::mpsc::{channel, Sender};
 const FPS: &[(i64, &str)] = &[(30, "30"), (60, "60"), (120, "120")];
 const QUALITY: &[(&str, &str)] = &[("low", "Low"), ("balanced", "Medium"), ("high", "High"), ("ultra", "Maximum")];
 const FORMAT: &[(&str, &str)] = &[("mp4", "MP4"), ("mkv", "MKV")];
-const GAP: f32 = 26.0;
+/// the gap between blocks (the column's spacing is 26 px, `ui` adds 6 of its own)
+const GAP: f32 = 22.0;
 
 fn sget<'a>(st: &'a Value, k: &str) -> &'a str {
     st.get(k).and_then(|v| v.as_str()).unwrap_or("")
@@ -24,15 +25,18 @@ fn fget(st: &Value, k: &str) -> f64 {
 }
 
 /// A page: scrolls, content in a centred column (at most 620 px wide, 24 px from the edges).
-pub fn scroll(ui: &mut Ui, content: impl FnOnce(&mut Ui)) {
+pub fn scroll(ui: &mut Ui, reserve_bar: bool, content: impl FnOnce(&mut Ui)) {
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        // the Qt window keeps 10 px for its scroll bar when there is one; the column then takes
+        // 100/102 of what is left between the 24 px margins (stretch 1 : 100 : 1) up to 620 px
         let full = ui.available_width();
-        let col = (full - 48.0).clamp(420.0, 620.0).min(full);
-        let left = ((full - col) / 2.0).max(0.0);
+        let room = full - if reserve_bar { 10.0 } else { 0.0 };
+        let col = ((room - 48.0) * 100.0 / 102.0).clamp(420.0, 620.0).min(full);
+        let left = ((room - col) / 2.0).max(0.0);
         ui.add_space(8.0);
         ui.horizontal_top(|ui| {
             ui.add_space(left);
-            ui.allocate_ui(vec2(col, 0.0), |ui| {
+            ui.allocate_ui_with_layout(vec2(col, 0.0), Layout::top_down(Align::Min), |ui| {
                 ui.set_width(col);
                 content(ui);
             });
@@ -158,7 +162,7 @@ impl App {
                 w::progress(ui, p, if secs > 0.0 { (buffered / secs) as f32 } else { 0.0 }, 170.0);
             });
         });
-        ui.add_space(GAP);
+        ui.add_space(27.0);
 
         // the two big buttons
         ui.vertical_centered(|ui| {
@@ -185,7 +189,7 @@ impl App {
                 w::subtitle(ui, p, &format!("or press {rk}"));
             }
         });
-        ui.add_space(GAP);
+        ui.add_space(31.0);
 
         // Video
         let monitors: Vec<(i64, i64, bool)> = st.get("monitors").and_then(|m| m.as_array()).map(|a| a.iter().map(|m| (m["w"].as_i64().unwrap_or(0), m["h"].as_i64().unwrap_or(0), m["main"].as_bool().unwrap_or(false))).collect()).unwrap_or_default();
@@ -247,7 +251,7 @@ impl App {
             return;
         }
         let clips = self.clips.clone();
-        scroll(ui, |ui| {
+        scroll(ui, clips.len() > 8, |ui| {
             let total: u64 = clips.iter().map(|c| c.size).sum();
             let desc = format!("{} clip{} · {}", clips.len(), if clips.len() == 1 { "" } else { "s" }, human_size(total as f64));
             let mut refresh = false;
@@ -413,13 +417,14 @@ impl App {
             sep_if(ui, p, &mut first);
             let mut on = self.cfg.b("intro");
             w::row(ui, p, "Intro", "Replay number and date in the corner for the first seconds", false, true, |_| {}, |ui| {
-                if w::switch(ui, p, &mut on, true).changed() {
-                    self.set("intro", json!(on));
-                }
+                // right to left: the preview button, then the switch
                 if w::icon_button(ui, p, "play", "Preview").clicked() {
                     self.flush();
                     self.show_toast("Rendering the preview…");
                     preview_intro(self.cfg.clone());
+                }
+                if w::switch(ui, p, &mut on, true).changed() {
+                    self.set("intro", json!(on));
                 }
             });
         });

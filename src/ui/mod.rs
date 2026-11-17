@@ -368,9 +368,9 @@ impl eframe::App for App {
         let rest = ui.available_rect_before_wrap();
         let mut body = ui.new_child(egui::UiBuilder::new().max_rect(rest).layout(egui::Layout::top_down(egui::Align::Min)));
         match self.tab {
-            0 => pages::scroll(&mut body, |ui| self.page_record(ui, &p, &st)),
+            0 => pages::scroll(&mut body, true, |ui| self.page_record(ui, &p, &st)),
             1 => self.page_clips(&mut body, &p),
-            _ => pages::scroll(&mut body, |ui| self.page_settings(ui, &p, &st)),
+            _ => pages::scroll(&mut body, true, |ui| self.page_settings(ui, &p, &st)),
         }
         self.dialogs(&ctx, &p);
         if let Some((text, _)) = &self.toast {

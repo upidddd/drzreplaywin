@@ -91,7 +91,7 @@ pub fn button(ui: &mut Ui, p: &Palette, text: &str, kind: Kind, enabled: bool) -
         Kind::Normal => (10.0, false, 14.0, 30.0),
         Kind::Accent => (10.0, true, 14.0, 30.0),
         Kind::Big => (10.5, true, 40.0, 38.0),
-        Kind::Rec(_) => (10.0, matches!(kind, Kind::Rec(true)), 22.0, 32.0),
+        Kind::Rec(_) => (10.0, matches!(kind, Kind::Rec(true)), 22.0, 34.0),
     };
     let f = if semi { font_semibold(pt(size_pt)) } else { font(pt(size_pt)) };
     let ts = text_size(ui, text, f.clone());
@@ -348,30 +348,44 @@ pub fn progress(ui: &mut Ui, p: &Palette, fraction: f32, width: f32) {
 /// One row of a card: [prefix] title / subtitle … [suffix]. A hovered activatable row gets a highlight.
 #[allow(clippy::too_many_arguments)]
 pub fn row(ui: &mut Ui, p: &Palette, title: &str, sub: &str, activatable: bool, enabled: bool, prefix: impl FnOnce(&mut Ui), suffix: impl FnOnce(&mut Ui)) -> Response {
-    let h = if sub.is_empty() { 52.0 } else { 55.0 };
+    let h = if sub.is_empty() { 52.0 } else { 54.0 };
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), h), if activatable { Sense::click() } else { Sense::hover() });
     if activatable && resp.hovered() {
         ui.painter().rect_filled(rect.shrink2(vec2(0.0, 0.0)), radius(7.0), p.hover);
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-    let mut child = ui.new_child(UiBuilder::new().max_rect(Rect::from_min_max(egui::pos2(rect.min.x + 16.0, rect.min.y), egui::pos2(rect.max.x - 12.0, rect.max.y))).layout(Layout::left_to_right(Align::Center)));
-    child.spacing_mut().item_spacing = vec2(12.0, 0.0);
+    let inner = Rect::from_min_max(egui::pos2(rect.min.x + 16.0, rect.min.y), egui::pos2(rect.max.x - 12.0, rect.max.y));
+    // the controls on the right first: they say how much room is left for the text
+    let mut right = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::right_to_left(Align::Center)));
+    right.spacing_mut().item_spacing = vec2(6.0, 0.0);
     if !enabled {
-        child.disable();
+        right.disable();
     }
-    prefix(&mut child);
-    child.vertical(|ui| {
-        ui.spacing_mut().item_spacing = vec2(0.0, 1.0);
-        let c = if enabled { p.text } else { p.dim };
-        ui.label(egui::RichText::new(title).font(font(BODY)).color(c));
-        if !sub.is_empty() {
-            ui.label(egui::RichText::new(sub).font(font(SMALL)).color(p.dim));
-        }
-    });
-    child.with_layout(Layout::right_to_left(Align::Center), |ui| {
-        ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
-        suffix(ui);
-    });
+    suffix(&mut right);
+    let used_r = right.min_rect();
+    let suffix_left = if used_r.width() > 0.5 { used_r.min.x } else { inner.max.x };
+    // the picture on the left
+    let mut left = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::left_to_right(Align::Center)));
+    left.spacing_mut().item_spacing = vec2(12.0, 0.0);
+    if !enabled {
+        left.disable();
+    }
+    prefix(&mut left);
+    let used_l = left.min_rect();
+    let text_x = if used_l.width() > 0.5 { used_l.max.x + 12.0 } else { inner.min.x };
+    // title and subtitle, together centred in the row
+    let tc = if enabled { p.text } else { p.dim };
+    let tg = ui.painter().layout_no_wrap(title.to_string(), font(BODY), tc);
+    let sg = (!sub.is_empty()).then(|| ui.painter().layout_no_wrap(sub.to_string(), font(SMALL), p.dim));
+    let total = tg.size().y + sg.as_ref().map(|g| g.size().y + 1.0).unwrap_or(0.0);
+    let top = rect.center().y - total / 2.0;
+    let clip = Rect::from_min_max(egui::pos2(text_x, rect.min.y), egui::pos2((suffix_left - 12.0).max(text_x), rect.max.y));
+    let pa = ui.painter().with_clip_rect(clip);
+    let th = tg.size().y;
+    pa.galley(egui::pos2(text_x, top), tg, tc);
+    if let Some(g) = sg {
+        pa.galley(egui::pos2(text_x, top + th + 1.0), g, p.dim);
+    }
     resp
 }
 
@@ -382,7 +396,7 @@ pub fn separator(ui: &mut Ui, p: &Palette) {
 
 /// A titled card of rows, like a libadwaita preferences group.
 pub fn group<R>(ui: &mut Ui, p: &Palette, title: &str, description: &str, header_suffix: impl FnOnce(&mut Ui), rows: impl FnOnce(&mut Ui) -> R) -> R {
-    ui.spacing_mut().item_spacing = vec2(0.0, 6.0);
+    ui.spacing_mut().item_spacing = vec2(0.0, 3.0);
     let has_head = !title.is_empty() || !description.is_empty();
     if has_head {
         ui.horizontal(|ui| {

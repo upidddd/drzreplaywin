@@ -81,7 +81,9 @@ pub fn run(out: &Path) -> i32 {
     let mut t = Test { svc: svc.clone(), out: out.clone(), t0: Instant::now(), steps: vec![], report: serde_json::Map::new() };
     t.report.insert("version".into(), json!(C::VERSION));
     t.report.insert("platform".into(), json!(std::env::consts::OS));
-    let ok = steps(&mut t);
+    // DRZ_SHOTS_ONLY: just the pictures of the window, with the clips of an earlier run
+    let shots_only = std::env::var_os("DRZ_SHOTS_ONLY").is_some();
+    let ok = if shots_only { std::thread::sleep(Duration::from_secs(3)); true } else { steps(&mut t) };
     // the window's screenshots (they need the app's status, so the app is still running)
     let shots = screenshots(&mut t);
     t.report.insert("screenshots".into(), json!(shots));
@@ -233,7 +235,9 @@ fn steps(t: &mut Test) -> bool {
 }
 
 fn screenshots(t: &mut Test) -> String {
-    let Some(clip) = t.saved().first().cloned() else { return "no clip to show".into() };
+    let existing = std::fs::read_dir(t.out.join("clips")).ok().and_then(|d| d.flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|e| e == "mp4")));
+    let Some(path) = t.saved().first().map(|c| c.path.clone()).or(existing) else { return "no clip to show".into() };
+    let clip = Clip { path, length: 0.0 };
     let mut steps = vec![];
     for (theme, dark) in [("light", false), ("dark", true)] {
         steps.push(Step::Theme(dark));
