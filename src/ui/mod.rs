@@ -47,7 +47,6 @@ pub struct Script {
     pub steps: Vec<Step>,
     pub at: usize,
     pub wait: u32,
-    pub waiting_shot: bool,
 }
 
 #[derive(Clone)]

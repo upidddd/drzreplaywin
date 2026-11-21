@@ -5,7 +5,7 @@ use super::widgets::{self as w, Kind};
 use super::{App, UiEv, MAX_CLIPS_SHOWN};
 use crate::config::{self as C};
 use crate::fmt::{human_date, human_size, human_time, short_path};
-use crate::{hotkey, system as sys, trim, winutil};
+use crate::{system as sys, trim, winutil};
 use eframe::egui::{self, vec2, Align, Layout, Rect, Sense, Ui};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -623,7 +623,3 @@ fn make_thumb(path: &Path) -> (Option<PathBuf>, f64) {
     (jpg.exists().then_some(jpg), dur)
 }
 
-#[allow(dead_code)]
-fn _hk(_: &str) -> bool {
-    hotkey::solo_ok("F9")
-}

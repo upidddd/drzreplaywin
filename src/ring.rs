@@ -12,21 +12,8 @@ const TS: usize = 188;
 const VIDEO_PID: usize = 0x100; // ffmpeg's mpegts muxer numbers streams from 0x100, video is mapped first
 const PAT_PID: usize = 0;
 const PMT_PID: usize = 0x1000;
-const PTS_WRAP: i64 = 1 << 33;
-const PTS_HZ: f64 = 90000.0;
-
-/// PTS of the PES packet that starts in this TS packet, or None
-fn pes_pts(pkt: &[u8]) -> Option<i64> {
-    let off = 4 + if pkt[3] & 0x20 != 0 { 1 + pkt[4] as usize } else { 0 };
-    if off + 14 > TS || pkt[off..off + 3] != [0, 0, 1] || pkt[off + 7] & 0x80 == 0 {
-        return None;
-    }
-    let p = &pkt[off + 9..off + 14];
-    Some((((p[0] >> 1) & 7) as i64) << 30 | (p[1] as i64) << 22 | ((p[2] >> 1) as i64) << 15 | (p[3] as i64) << 7 | (p[4] >> 1) as i64)
-}
 
 struct Chunk {
-    pts: i64,
     t: Instant,
     data: Vec<u8>,
 }
@@ -48,16 +35,13 @@ pub struct Ring {
 }
 
 impl Inner {
-    fn now_pts(&self, now: Instant) -> f64 {
-        let last = self.chunks.back().unwrap();
-        last.pts as f64 + now.duration_since(last.t).as_secs_f64() * PTS_HZ
-    }
-    /// seconds from the start of this chunk to now (by video time, wrap-safe)
-    fn age(&self, pts: i64, now: Instant) -> f64 {
-        ((self.now_pts(now) - pts as f64).rem_euclid(PTS_WRAP as f64)) / PTS_HZ
+    /// seconds since this chunk began arriving: by the clock, not by the video's own timestamps,
+    /// which jump when the screen is still or frames are dropped
+    fn age(c: &Chunk, now: Instant) -> f64 {
+        now.duration_since(c.t).as_secs_f64()
     }
     fn trim(&mut self, now: Instant) {
-        while self.chunks.len() > 1 && (self.age(self.chunks[1].pts, now) >= self.seconds || self.size > self.max_bytes) {
+        while self.chunks.len() > 1 && (Self::age(&self.chunks[1], now) >= self.seconds || self.size > self.max_bytes) {
             let c = self.chunks.pop_front().unwrap();
             self.size -= c.data.len();
         }
@@ -172,8 +156,7 @@ impl Ring {
                 c.data.extend_from_slice(&buf[pos..i]);
                 g.size += i - pos;
             }
-            let pts = pes_pts(&buf[i..i + TS]).unwrap_or_else(|| g.chunks.back().map(|c| (c.pts + PTS_HZ as i64) % PTS_WRAP).unwrap_or(0));
-            g.chunks.push_back(Chunk { pts, t: now, data: vec![] });
+            g.chunks.push_back(Chunk { t: now, data: vec![] });
             pos = i;
         }
         if let Some(c) = g.chunks.back_mut() {
@@ -221,7 +204,7 @@ impl Ring {
         let g = self.inner.lock().unwrap();
         match g.chunks.front() {
             None => 0.0,
-            Some(c) => g.age(c.pts, Instant::now()).min(g.seconds),
+            Some(c) => Inner::age(c, Instant::now()).min(g.seconds),
         }
     }
 
@@ -234,7 +217,7 @@ impl Ring {
         let now = Instant::now();
         let mut first = 0;
         for i in (0..g.chunks.len()).rev() {
-            if g.age(g.chunks[i].pts, now) >= seconds {
+            if Inner::age(&g.chunks[i], now) >= seconds {
                 first = i;
                 break;
             }
@@ -245,7 +228,7 @@ impl Ring {
         for c in g.chunks.iter().skip(first) {
             out.extend_from_slice(&c.data);
         }
-        Some((out, g.age(g.chunks[first].pts, now)))
+        Some((out, Inner::age(&g.chunks[first], now)))
     }
 }
 
@@ -293,12 +276,37 @@ mod tests {
         }
         let g = ring.inner.lock().unwrap();
         assert!(g.chunks.len() >= 2 && g.chunks.len() <= 11);
-        assert_eq!(g.chunks.back().unwrap().pts, 9 * 90000);
         assert!(g.chunks.iter().all(|c| c.data.len() % TS == 0 && c.data[0] == 0x47));
         drop(g);
         let snap = ring.snapshot(1.0).expect("a snapshot");
         assert_eq!(snap.0[0], 0x47);
         assert_eq!(snap.0.len() % TS, 0);
+    }
+
+    #[test]
+    fn the_buffer_is_bounded_by_the_clock_not_by_video_timestamps() {
+        // video timestamps that do not move (a still screen) must not keep old chunks alive
+        let ring = Ring::new(3.0, 1 << 30);
+        let mut stream = pkt(PAT_PID, false, false, 0);
+        stream.extend(pkt(PMT_PID, false, false, 0));
+        for _ in 0..30 {
+            stream.extend(pkt(VIDEO_PID, true, true, 0)); // every keyframe has the same timestamp
+            stream.extend(pkt(VIDEO_PID, false, false, 0));
+        }
+        ring.feed(&stream);
+        {
+            let mut g = ring.inner.lock().unwrap();
+            let n = g.chunks.len();
+            let now = Instant::now();
+            for (i, c) in g.chunks.iter_mut().enumerate() {
+                // one chunk a second, the newest just now
+                c.t = now - std::time::Duration::from_secs((n - 1 - i) as u64);
+            }
+            g.trim(now);
+            assert!(g.chunks.len() <= 4, "kept {} chunks", g.chunks.len());
+        }
+        let (_, len) = ring.snapshot(3.0).unwrap();
+        assert!(len < 4.5, "a replay of 3 s must not be {len} s");
     }
 
     #[test]

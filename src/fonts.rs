@@ -28,7 +28,3 @@ pub fn semibold() -> Vec<u8> {
     first_file(&["seguisb.ttf", "NotoSans-SemiBold.ttf", "NotoSans-Bold.ttf"]).unwrap_or_else(regular)
 }
 
-/// Segoe UI Symbol / Emoji are not needed: the icons are drawn from vector paths
-pub fn bold() -> Vec<u8> {
-    first_file(&["segoeuib.ttf", "NotoSans-Bold.ttf"]).unwrap_or_else(semibold)
-}

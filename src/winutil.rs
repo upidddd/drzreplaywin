@@ -1,5 +1,4 @@
 //! Small Windows things: start with Windows, the click sound, waiting for another process, DPI.
-use crate::config as C;
 
 pub const DETACHED_PROCESS: u32 = 0x0000_0008;
 
@@ -64,6 +63,7 @@ pub fn play_click() {
     #[cfg(windows)]
     unsafe {
         use windows::core::PCWSTR;
+        use crate::config as C;
         use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_MEMORY, SND_NODEFAULT};
         let _ = PlaySoundW(PCWSTR(C::CLICK_WAV.as_ptr() as *const u16), None, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
     }

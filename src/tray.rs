@@ -54,7 +54,7 @@ impl Tray {
     /// Put the icon in the notification area; `on_act` hears the clicks (from the tray's own thread).
     pub fn new(view: View, on_act: impl Fn(Act) + Send + Sync + 'static) -> Tray {
         let (tx, rx) = channel::<Cmd>();
-        platform::spawn(view, rx, Box::new(on_act));
+        platform::spawn(view, rx, std::sync::Arc::new(on_act));
         Tray { tx }
     }
     pub fn update(&self, v: View) {
@@ -121,6 +121,7 @@ mod platform {
     use super::*;
     use std::cell::RefCell;
     use std::sync::atomic::{AtomicIsize, Ordering};
+    use std::sync::Arc;
     use std::sync::mpsc::Receiver;
     use windows::core::{w, PCWSTR};
     use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
@@ -136,7 +137,7 @@ mod platform {
 
     struct State {
         rx: Receiver<Cmd>,
-        on_act: Box<dyn Fn(Act) + Send + Sync>,
+        on_act: Arc<dyn Fn(Act) + Send + Sync>,
         view: View,
         icons: [Option<HICON>; 3],
         size: u32,
@@ -203,9 +204,11 @@ mod platform {
 
     type NOTIFY_ACTION = windows::Win32::UI::Shell::NOTIFY_ICON_MESSAGE;
 
-    unsafe fn show_menu(hwnd: HWND, st: &State) {
-        let Ok(menu) = CreatePopupMenu() else { return };
-        let v = &st.view;
+    /// The menu runs its own message loop; what it needs is copied out so that nothing of ours stays borrowed meanwhile
+    /// (the app sends updates all the time, and they are handled inside that loop).
+    unsafe fn show_menu(hwnd: HWND, view: &View) -> Option<Act> {
+        let Ok(menu) = CreatePopupMenu() else { return None };
+        let v = view;
         let add = |id: usize, label: &str, enabled: bool| {
             let flags = MF_STRING | if enabled { MF_ENABLED } else { MF_GRAYED };
             let text: Vec<u16> = label.encode_utf16().chain(std::iter::once(0)).collect();
@@ -242,25 +245,31 @@ mod platform {
             6 => Act::Show,
             7 => Act::Restart,
             8 => Act::Quit,
-            _ => return,
+            _ => return None,
         };
-        (st.on_act)(act);
+        Some(act)
     }
 
     unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         match msg {
             WM_TRAY => {
-                STATE.with(|s| {
-                    if let Some(st) = s.borrow().as_ref() {
-                        match lp.0 as u32 & 0xFFFF {
-                            WM_LBUTTONUP => (st.on_act)(Act::Show),
-                            WM_MBUTTONUP => (st.on_act)(Act::Save),
-                            WM_RBUTTONUP | WM_CONTEXTMENU => show_menu(hwnd, st),
-                            NIN_BALLOONUSERCLICK => (st.on_act)(Act::BalloonClicked),
-                            _ => {}
+                let mouse = lp.0 as u32 & 0xFFFF;
+                // copy what is needed, then let go of the state before doing anything that can wait or re-enter
+                let (view, on_act) = match STATE.with(|s| s.borrow().as_ref().map(|st| (st.view.clone(), st.on_act.clone()))) {
+                    Some(x) => x,
+                    None => return LRESULT(0),
+                };
+                match mouse {
+                    WM_LBUTTONUP => on_act(Act::Show),
+                    WM_MBUTTONUP => on_act(Act::Save),
+                    WM_RBUTTONUP | WM_CONTEXTMENU => {
+                        if let Some(act) = show_menu(hwnd, &view) {
+                            on_act(act);
                         }
                     }
-                });
+                    NIN_BALLOONUSERCLICK => on_act(Act::BalloonClicked),
+                    _ => {}
+                }
                 LRESULT(0)
             }
             WM_WAKE => {
@@ -298,7 +307,7 @@ mod platform {
         }
     }
 
-    pub fn spawn(view: View, rx: Receiver<Cmd>, on_act: Box<dyn Fn(Act) + Send + Sync>) {
+    pub fn spawn(view: View, rx: Receiver<Cmd>, on_act: Arc<dyn Fn(Act) + Send + Sync>) {
         std::thread::Builder::new()
             .name("tray".into())
             .spawn(move || unsafe {
@@ -330,7 +339,7 @@ mod platform {
     use std::sync::mpsc::Receiver;
 
     pub fn wake() {}
-    pub fn spawn(_view: View, rx: Receiver<Cmd>, _on_act: Box<dyn Fn(Act) + Send + Sync>) {
+    pub fn spawn(_view: View, rx: Receiver<Cmd>, _on_act: std::sync::Arc<dyn Fn(Act) + Send + Sync>) {
         // no tray off Windows: just drain what is sent
         std::thread::spawn(move || for _ in rx {});
     }

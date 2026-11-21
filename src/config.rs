@@ -9,9 +9,6 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const REPO: &str = "upidddd/drzreplaywin";
 pub const MAX_BUFFER_MB: u64 = 2048; // the ring never grows past this, whatever the length
 
-pub fn install_cmd() -> String {
-    format!("irm https://github.com/{REPO}/releases/latest/download/install.ps1 | iex")
-}
 pub fn setup_url() -> String {
     format!("https://github.com/{REPO}/releases/latest/download/DrzReplayWIN-Setup.exe")
 }
@@ -67,8 +64,6 @@ pub fn ipc_port_file() -> PathBuf {
 
 // ---------------------------------------------------------------- assets (inside the program)
 pub const ICON_PNG: &[u8] = include_bytes!("../assets/icons/drzreplaywin.png");
-pub const ICON_ICO: &[u8] = include_bytes!("../assets/icons/drzreplaywin.ico");
-pub const ICON_SVG: &str = include_str!("../assets/icons/drzreplaywin.svg");
 pub const CLICK_WAV: &[u8] = include_bytes!("../assets/sounds/click.wav");
 pub const OSWALD: &[u8] = include_bytes!("../assets/fonts/Oswald.ttf");
 pub const INTER: &[u8] = include_bytes!("../assets/fonts/Inter-Medium.ttf");

@@ -140,9 +140,6 @@ impl Hotkey {
     pub fn error(&self) -> String {
         self.error.lock().unwrap().clone()
     }
-    pub fn text(&self) -> String {
-        self.text.lock().unwrap().clone()
-    }
 
     pub fn set(&self, text: &str) {
         *self.text.lock().unwrap() = text.to_string();
@@ -186,7 +183,7 @@ mod platform {
                 let _ = PeekMessageW(&mut msg, None, 0x400, 0x400, PM_NOREMOVE); // create the message queue
                 tid.store(GetCurrentThreadId(), Ordering::Relaxed);
                 let mut registered = false;
-                let mut register = |registered: &mut bool| {
+                let register = |registered: &mut bool| {
                     if *registered {
                         let _ = UnregisterHotKey(None, 1);
                         *registered = false;

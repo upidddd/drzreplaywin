@@ -315,7 +315,6 @@ impl App {
                 let _ = crate::ipc::request("hotkey_hold", json!({"which": key, "on": false}));
             });
         }
-        let _ = ctx;
         !close
     }
 

@@ -250,7 +250,7 @@ fn screenshots(t: &mut Test) -> String {
     steps.push(Step::Trim(clip.path));
     steps.push(Step::Shot("trim.png".into()));
     steps.push(Step::CloseDialog);
-    let script = Script { out: t.out.clone(), steps, at: 0, wait: 30, waiting_shot: false };
+    let script = Script { out: t.out.clone(), steps, at: 0, wait: 30 };
     t.log("taking screenshots");
     // the window runs in this thread; the app keeps going in the others
     let code = ui::run_window(Some(script));

@@ -32,7 +32,6 @@ pub enum Ev {
 struct FileRec {
     tmp: PathBuf,
     path: PathBuf,
-    t0: f64,
     length: f64,
 }
 
@@ -207,9 +206,6 @@ impl Recorder {
     pub fn filerec_start(&self) -> Option<f64> {
         self.lock().filerec.as_ref().map(|f| f.2)
     }
-    pub fn probe_cached(&self) -> Option<Probe> {
-        self.lock().probe.clone()
-    }
 
     pub fn status(&self) -> Status {
         let st = self.lock();
@@ -274,6 +270,7 @@ impl Recorder {
         }
         cmd.extend(args(&["-fps_mode", "passthrough"]));
         cmd.extend(sys::encoder_args(enc, &cfg.s("rec_quality"), cfg.i("fps")));
+        cmd.extend(args(&["-force_key_frames", "expr:gte(t,n_forced)"]));
         if with_audio {
             cmd.extend(args(&["-c:a", "aac", "-b:a", "160k"]));
         }
@@ -293,7 +290,7 @@ impl Recorder {
                 st.probe = Some(p);
             }
         }
-        let (child, with_audio, cfg) = {
+        let (child, with_audio) = {
             let mut st = self.lock();
             if st.gen != gen {
                 return;
@@ -347,9 +344,8 @@ impl Recorder {
             }
             st.info = Info { size: Some((w, h)), fps: cfg.i("fps"), encoder: enc };
             st.started_at = Instant::now();
-            (child, with_audio, cfg)
+            (child, with_audio)
         };
-        let _ = cfg;
         // stderr: the log, and the moment the first frame is grabbed (audio sample 0 is pinned to it)
         if let Some(err) = child.take_stderr() {
             let me = self.clone();
@@ -376,7 +372,7 @@ impl Recorder {
             if with_audio && st.fails >= 3 {
                 st.audio_off = true;
             }
-            if st.fails >= 4 && st.fails % 4 == 0 {
+            if st.fails >= 4 && st.fails.is_multiple_of(4) {
                 st.probe = None; // maybe the graphics card / driver changed
             }
             if st.fails >= 8 {
@@ -470,11 +466,6 @@ impl Recorder {
         b
     }
 
-    pub fn buffered(&self) -> f64 {
-        let st = self.lock();
-        self.buffered_locked(&st)
-    }
-
     /// Queue a save; two presses give two clips.
     pub fn save(&self) -> bool {
         {
@@ -524,9 +515,13 @@ impl Recorder {
     }
 
     /// MPEG-TS (a file, or bytes) → MP4 / MKV, no re-encoding.
-    fn remux(&self, src: Option<&Path>, path: &Path, data: Option<&[u8]>) -> Result<(), String> {
+    fn remux(&self, src: Option<&Path>, path: &Path, data: Option<&[u8]>, skip: f64) -> Result<(), String> {
         let tmp = PathBuf::from(format!("{}.part", path.display()));
-        let mut a = args(&["-hide_banner", "-v", "error", "-y", "-f", "mpegts", "-i"]);
+        let mut a = args(&["-hide_banner", "-v", "error", "-y", "-f", "mpegts"]);
+        if skip > 0.0 {
+            a.extend(args(&["-ss", &format!("{skip:.3}")]));
+        }
+        a.push("-i".into());
         a.push(src.map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "-".into()));
         a.extend(args(&["-map", "0", "-c", "copy", "-dn", "-avoid_negative_ts", "make_zero"]));
         let mp4 = path.extension().is_some_and(|e| e == "mp4");
@@ -546,7 +541,7 @@ impl Recorder {
 
     /// MPEG-TS bytes → MP4 / MKV with the intro laid over the first seconds. The picture has to be encoded
     /// again for that: the encoder the recorder uses, x264 if it can't.
-    fn with_intro(&self, cfg: &Config, data: &[u8], path: &Path, number: i64, when: chrono::DateTime<chrono::Local>) -> Result<(), String> {
+    fn with_intro(&self, cfg: &Config, data: &[u8], path: &Path, number: i64, when: chrono::DateTime<chrono::Local>, skip: f64) -> Result<(), String> {
         let clip = C::data_dir().join("intro.mov");
         let _ = fs::create_dir_all(C::data_dir());
         let info = self.info();
@@ -566,7 +561,12 @@ impl Recorder {
             let pix = if e == "qsv" || e == "amf" { "nv12" } else { "yuv420p" };
             // ffmpeg starts the replay's timestamps at 0, so the intro's START is seconds into the clip
             let fc = format!("[1:v]setpts=PTS-STARTPTS+{}/TB[ov];[0:v][ov]overlay={x}:{y}:eof_action=pass,format={pix}[v]", intro::START);
-            let mut a = args(&["-hide_banner", "-v", "error", "-y", "-f", "mpegts", "-i", "-", "-i", &clip.to_string_lossy(), "-filter_complex", &fc, "-map", "[v]", "-map", "0:a?", "-c:a", "copy", "-dn", "-fps_mode", "passthrough"]);
+            let ss = format!("{skip:.3}");
+            let mut a = args(&["-hide_banner", "-v", "error", "-y", "-f", "mpegts"]);
+            if skip > 0.0 {
+                a.extend(args(&["-ss", &ss]));
+            }
+            a.extend(args(&["-i", "-", "-i", &clip.to_string_lossy(), "-filter_complex", &fc, "-map", "[v]", "-map", "0:a?", "-c:a", "copy", "-dn", "-fps_mode", "passthrough"]));
             a.extend(sys::encoder_args(&e, &cfg.s("rec_quality"), cfg.i("fps")));
             a.extend(if mp4 { args(&["-movflags", "+faststart", "-f", "mp4"]) } else { args(&["-f", "matroska"]) });
             a.push(tmp.to_string_lossy().into_owned());
@@ -610,17 +610,23 @@ impl Recorder {
             st.last_save = Some((session, pressed));
             prev
         };
+        // the chunks start on key frames, so a little more than asked for is normal; a lot more means the
+        // buffer held something it should not (a long gap between key frames): cut the excess off
+        let skip = if length > want + 2.0 { length - want } else { 0.0 };
+        if skip > 0.0 {
+            self.log(&format!("the buffer held {length:.1} s for a {want:.1} s replay, cutting {skip:.1} s"));
+        }
         let path = self.new_path(&cfg, cfg.ext());
         let number = intro::next_number(&cfg); // every replay counts, intro or not
         let res = if cfg.b("intro") {
             let when = chrono::Local::now() - chrono::Duration::milliseconds(pressed.elapsed().as_millis() as i64);
-            self.with_intro(&cfg, &data, &path, number, when).or_else(|e| {
+            self.with_intro(&cfg, &data, &path, number, when, skip).or_else(|e| {
                 // a broken intro must not cost the replay
                 self.log(&format!("intro failed, saving without it: {e}"));
-                self.remux(None, &path, Some(&data))
+                self.remux(None, &path, Some(&data), skip)
             })
         } else {
-            self.remux(None, &path, Some(&data))
+            self.remux(None, &path, Some(&data), skip)
         };
         if let Err(e) = res {
             self.lock().last_save = prev;
@@ -632,14 +638,6 @@ impl Recorder {
     }
 
     // ------------------------------------------------------------------ full recordings
-    pub fn toggle_file(self: &Arc<Self>) -> bool {
-        if self.filerec_start().is_some() {
-            self.stop_file(false)
-        } else {
-            self.start_file()
-        }
-    }
-
     /// Write the stream to disk from now until stopped (same encoder, nothing extra to encode).
     pub fn start_file(self: &Arc<Self>) -> bool {
         let mut st = self.lock();
@@ -723,11 +721,11 @@ impl Recorder {
             self.ring.reset();
             self.set(st, "paused", "");
         }
-        Some(FileRec { tmp, path, t0, length })
+        Some(FileRec { tmp, path, length })
     }
 
     fn finish_file(&self, rec: FileRec) {
-        match self.remux(Some(&rec.tmp), &rec.path, None) {
+        match self.remux(Some(&rec.tmp), &rec.path, None, 0.0) {
             Ok(()) => {
                 let _ = fs::remove_file(&rec.tmp);
                 let size = fs::metadata(&rec.path).map(|m| m.len()).unwrap_or(0);
@@ -739,7 +737,6 @@ impl Recorder {
                 self.emit(Ev::SaveFailed(format!("recording: {e} (the raw file is {})", rec.tmp.display())));
             }
         }
-        let _ = rec.t0;
     }
 
     /// Delete the oldest clips past the count / size limits.
@@ -762,7 +759,7 @@ impl Recorder {
                     .collect()
             })
             .unwrap_or_default();
-        clips.sort_by(|a, b| b.0.cmp(&a.0));
+        clips.sort_by_key(|c| std::cmp::Reverse(c.0));
         let mut total = 0u64;
         for (i, (_, size, p)) in clips.iter().enumerate() {
             total += size;
