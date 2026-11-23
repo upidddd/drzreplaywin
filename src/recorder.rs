@@ -270,7 +270,6 @@ impl Recorder {
         }
         cmd.extend(args(&["-fps_mode", "passthrough"]));
         cmd.extend(sys::encoder_args(enc, &cfg.s("rec_quality"), cfg.i("fps")));
-        cmd.extend(args(&["-force_key_frames", "expr:gte(t,n_forced)"]));
         if with_audio {
             cmd.extend(args(&["-c:a", "aac", "-b:a", "160k"]));
         }

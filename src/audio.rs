@@ -287,17 +287,32 @@ mod platform {
             (&col).into_iter().filter_map(|d| d.ok()).find(|d| d.get_friendlyname().is_ok_and(|n| n.starts_with(name))).ok_or_else(|| "no device".to_string())?
         };
         let label = device.get_friendlyname().unwrap_or_default();
-        let mut client = device.get_iaudioclient().map_err(e)?;
         // Windows converts whatever the device speaks to this
         let fmt = WaveFormat::new(32, 32, SampleType::Float, RATE, 2, None);
-        let (_, min_time) = client.get_device_period().map_err(e)?;
-        let mode = StreamMode::EventsShared { autoconvert: true, buffer_duration_hns: min_time };
-        // capturing from a playback device is the loopback
-        client.initialize_client(&fmt, Direction::Capture, mode, None).map_err(e)?;
-        let ev = client.set_get_eventhandle().map_err(e)?;
+        // capturing from a playback device is the loopback. Event timing first; some drivers refuse it, then polling
+        let mut started = None;
+        let mut why = String::new();
+        for events in [true, false] {
+            let mut c = device.get_iaudioclient().map_err(e)?;
+            let (_, min_time) = c.get_device_period().map_err(e)?;
+            let mode = if events {
+                StreamMode::EventsShared { autoconvert: true, buffer_duration_hns: min_time }
+            } else {
+                StreamMode::PollingShared { autoconvert: true, buffer_duration_hns: 1_000_000 }
+            };
+            match c.initialize_client(&fmt, Direction::Capture, mode, None) {
+                Ok(()) => {
+                    started = Some((c, events));
+                    break;
+                }
+                Err(x) => why = format!("{why}{}{x}", if why.is_empty() { "" } else { "; then " }),
+            }
+        }
+        let Some((mut client, events)) = started else { return Err(why) };
+        let ev = if events { Some(client.set_get_eventhandle().map_err(e)?) } else { None };
         let cap = client.get_audiocaptureclient().map_err(e)?;
         client.start_stream().map_err(e)?;
-        let _ = tx.send(Ok(format!("{label} ({RATE} Hz, stereo)")));
+        let _ = tx.send(Ok(format!("{label} ({RATE} Hz, stereo{})", if events { "" } else { ", polling" })));
         let mut bytes: VecDeque<u8> = VecDeque::new();
         while !stop.load(Ordering::Relaxed) {
             if cap.read_from_device_to_deque(&mut bytes).is_ok() && !bytes.is_empty() {
@@ -309,8 +324,13 @@ mod platform {
                 }
                 buf.lock().unwrap().data.extend(samples);
             }
-            // a loopback device sends nothing while nothing plays: the timeout is normal
-            let _ = ev.wait_for_event(200);
+            match &ev {
+                // a loopback device sends nothing while nothing plays: the timeout is normal
+                Some(ev) => {
+                    let _ = ev.wait_for_event(200);
+                }
+                None => std::thread::sleep(Duration::from_millis(10)),
+            }
         }
         let _ = client.stop_stream();
         Ok(())
