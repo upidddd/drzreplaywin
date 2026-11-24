@@ -57,6 +57,8 @@ struct State {
     mixer: Option<Mixer>,
     gen: u64,
     fails: u32,
+    stalled: bool,       // the watchdog stopped ffmpeg because no picture came: not a failure of the setup
+    stall_restarts: u32, // in a row, for the delay
     audio_off: bool, // sound kept failing: record without it
     probe: Option<Probe>,
     info: Info,
@@ -102,6 +104,8 @@ fn new_state() -> State {
         mixer: None,
         gen: 0,
         fails: 0,
+        stalled: false,
+        stall_restarts: 0,
         audio_off: false,
         probe: None,
         info: Info::default(),
@@ -365,7 +369,11 @@ impl Recorder {
                     }
                     let idle = me.ring.video_idle();
                     if idle > VIDEO_STALL {
-                        me.log(&format!("no picture for {idle:.0} s, restarting the capture"));
+                        {
+                            let mut st = me.lock();
+                            st.stalled = true;
+                            Self::log_to(&mut st, &format!("no picture for {idle:.0} s (screen locked, monitor asleep, capture lost?), restarting the capture"));
+                        }
                         let _ = child.kill();
                         return;
                     }
@@ -379,6 +387,22 @@ impl Recorder {
         let retry = {
             let mut st = self.lock();
             if st.gen != gen {
+                return;
+            }
+            if std::mem::take(&mut st.stalled) {
+                // the capture hung (a locked screen, a sleeping monitor, a lost desktop): keep trying, it comes back on
+                // its own, and it is not a reason to give up or to turn the sound off
+                st.stall_restarts += 1;
+                let wait = (2 * st.stall_restarts as u64).min(20);
+                self.set(&mut st, "starting", "");
+                drop(st);
+                std::thread::sleep(Duration::from_secs(wait));
+                let st = self.lock();
+                if st.gen == gen {
+                    drop(st);
+                    let me = self.clone();
+                    std::thread::Builder::new().name("recorder".into()).spawn(move || me.launch(gen)).ok();
+                }
                 return;
             }
             st.fails += 1;
@@ -429,6 +453,7 @@ impl Recorder {
                 let mut st = self.lock();
                 if st.gen == gen {
                     self.set(&mut st, "recording", "");
+                    st.stall_restarts = 0;
                     if st.file_pending {
                         st.file_pending = false;
                         let _ = self.start_file_inner(&mut st);
