@@ -35,6 +35,9 @@ struct FileRec {
     length: f64,
 }
 
+/// seconds without a video packet after which the capture is restarted
+const VIDEO_STALL: f64 = 10.0;
+
 enum Job {
     Replay(Instant),
     Recording(FileRec),
@@ -349,6 +352,25 @@ impl Recorder {
         if let Some(err) = child.take_stderr() {
             let me = self.clone();
             std::thread::spawn(move || me.read_err(err, gen));
+        }
+        // a picture that stops while the sound goes on (the desktop capture hangs) is a failure too: start over
+        {
+            let (me, child) = (self.clone(), child.clone());
+            std::thread::Builder::new()
+                .name("watchdog".into())
+                .spawn(move || loop {
+                    std::thread::sleep(Duration::from_secs(1));
+                    if matches!(child.try_wait(), Ok(Some(_))) || me.lock().gen != gen {
+                        return;
+                    }
+                    let idle = me.ring.video_idle();
+                    if idle > VIDEO_STALL {
+                        me.log(&format!("no picture for {idle:.0} s, restarting the capture"));
+                        let _ = child.kill();
+                        return;
+                    }
+                })
+                .ok();
         }
         if let Some(out) = child.take_stdout() {
             self.read_out(out, gen);

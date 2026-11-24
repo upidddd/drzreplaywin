@@ -12,9 +12,14 @@ const TS: usize = 188;
 const VIDEO_PID: usize = 0x100; // ffmpeg's mpegts muxer numbers streams from 0x100, video is mapped first
 const PAT_PID: usize = 0;
 const PMT_PID: usize = 0x1000;
+/// a chunk is cut by the clock too once it is this old, so a stream without key frames (a frozen picture,
+/// sound only) cannot grow into one chunk that is never trimmed
+const MAX_CHUNK: f64 = 2.0;
 
 struct Chunk {
     t: Instant,
+    /// starts at a video key frame (cut by the clock otherwise)
+    key: bool,
     data: Vec<u8>,
 }
 
@@ -28,6 +33,7 @@ struct Inner {
     pmt: Vec<u8>,
     tap: Option<File>, // a file the stream is also written to (full recording)
     tap_header: bool,
+    last_video: Instant, // when the last video packet arrived
 }
 
 pub struct Ring {
@@ -54,6 +60,7 @@ impl Inner {
         self.pmt.clear();
         self.tap = None;
         self.tap_header = false;
+        self.last_video = Instant::now();
     }
 }
 
@@ -85,6 +92,7 @@ impl Ring {
                 pmt: vec![],
                 tap: None,
                 tap_header: false,
+                last_video: Instant::now(),
             }),
         }
     }
@@ -97,6 +105,10 @@ impl Ring {
     }
     pub fn size(&self) -> usize {
         self.inner.lock().unwrap().size
+    }
+    /// seconds since the last video packet (a frozen picture keeps this growing while sound goes on)
+    pub fn video_idle(&self) -> f64 {
+        Instant::now().duration_since(self.inner.lock().unwrap().last_video).as_secs_f64()
     }
     pub fn has_chunks(&self) -> bool {
         !self.inner.lock().unwrap().chunks.is_empty()
@@ -117,6 +129,7 @@ impl Ring {
         let (mut pat, mut pmt) = (None, None);
         let mut i = start;
         let mut bad = false;
+        let mut video = false;
         while i < n {
             let p = &buf[i..i + TS];
             if p[0] != 0x47 {
@@ -127,6 +140,7 @@ impl Ring {
                 break;
             }
             let pid = ((p[1] & 0x1f) as usize) << 8 | p[2] as usize;
+            video |= pid == VIDEO_PID;
             if pid == VIDEO_PID && p[1] & 0x40 != 0 && p[3] & 0x20 != 0 && p[4] > 0 && p[5] & 0x40 != 0 {
                 keys.push(i);
             } else if pid == PAT_PID {
@@ -149,6 +163,9 @@ impl Ring {
             g.pmt = buf[i..i + TS].to_vec();
         }
         let now = Instant::now();
+        if video {
+            g.last_video = now;
+        }
         let had_chunk = !g.chunks.is_empty();
         let mut pos = start;
         for &i in &keys {
@@ -156,12 +173,15 @@ impl Ring {
                 c.data.extend_from_slice(&buf[pos..i]);
                 g.size += i - pos;
             }
-            g.chunks.push_back(Chunk { t: now, data: vec![] });
+            g.chunks.push_back(Chunk { t: now, key: true, data: vec![] });
             pos = i;
         }
         if let Some(c) = g.chunks.back_mut() {
             c.data.extend_from_slice(&buf[pos..n]);
             g.size += n - pos;
+        }
+        if g.chunks.back().is_some_and(|c| Inner::age(c, now) >= MAX_CHUNK) {
+            g.chunks.push_back(Chunk { t: now, key: false, data: vec![] });
         }
         if g.tap.is_some() && (had_chunk || !keys.is_empty()) {
             let first = if had_chunk { start } else { keys[0] };
@@ -215,13 +235,9 @@ impl Ring {
             return None;
         }
         let now = Instant::now();
-        let mut first = 0;
-        for i in (0..g.chunks.len()).rev() {
-            if Inner::age(&g.chunks[i], now) >= seconds {
-                first = i;
-                break;
-            }
-        }
+        // the newest chunk that is long enough and starts at a key frame, else the newest that is long enough
+        let old: Vec<usize> = (0..g.chunks.len()).rev().filter(|&i| Inner::age(&g.chunks[i], now) >= seconds).collect();
+        let first = old.iter().copied().find(|&i| g.chunks[i].key).or(old.first().copied()).unwrap_or(0);
         let mut out = Vec::with_capacity(g.size + 2 * TS);
         out.extend_from_slice(&g.pat);
         out.extend_from_slice(&g.pmt);
@@ -307,6 +323,38 @@ mod tests {
         }
         let (_, len) = ring.snapshot(3.0).unwrap();
         assert!(len < 4.5, "a replay of 3 s must not be {len} s");
+    }
+
+    #[test]
+    fn sound_without_picture_stays_bounded() {
+        // the picture freezes after one key frame, the sound goes on: the buffer must still hold only a few seconds
+        let ring = Ring::new(3.0, 1 << 30);
+        let mut stream = pkt(PAT_PID, false, false, 0);
+        stream.extend(pkt(PMT_PID, false, false, 0));
+        stream.extend(pkt(VIDEO_PID, true, true, 0));
+        ring.feed(&stream);
+        for _ in 0..60 {
+            {
+                // a second passes
+                let mut g = ring.inner.lock().unwrap();
+                for c in g.chunks.iter_mut() {
+                    c.t -= std::time::Duration::from_secs(1);
+                }
+                g.last_video -= std::time::Duration::from_secs(1);
+            }
+            let mut audio = vec![];
+            for _ in 0..20 {
+                audio.extend(pkt(VIDEO_PID + 1, false, false, 0));
+            }
+            ring.feed(&audio);
+        }
+        let g = ring.inner.lock().unwrap();
+        assert!(g.chunks.len() <= 6, "kept {} chunks", g.chunks.len());
+        assert!(g.size <= 6 * 20 * TS * 3, "kept {} bytes", g.size);
+        drop(g);
+        assert!(ring.video_idle() >= 59.0, "idle {}", ring.video_idle());
+        let (_, len) = ring.snapshot(3.0).unwrap();
+        assert!(len < 6.0, "a 3 s replay came out as {len} s");
     }
 
     #[test]
